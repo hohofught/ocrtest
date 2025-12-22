@@ -21,7 +21,7 @@
 > Linux(Ubuntu, CentOS)나 MacOS에서는 `winsdk` 라이브러리 호환 문제로 실행되지 않습니다.
 
 * **OS**: Windows 10 / 11 (한국어 언어 팩 설치 필수)
-* **Python**: 3.8 이상
+* **Python**: 3.8 이상 3.12 권장
 * **Hardware**: CUDA 지원 NVIDIA GPU 권장 (YOLO 속도 향상), CPU로도 구동 가능.
 
 ---
