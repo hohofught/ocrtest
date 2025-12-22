@@ -11,10 +11,15 @@ import numpy as np
 import uuid
 import gc
 import time
+import socket
+import shutil
+import requests
+import subprocess
 from datetime import datetime
 import pandas as pd
 from flask import Flask, render_template, request, send_from_directory, jsonify, redirect, url_for
 from ultralytics import YOLO
+from waitress import serve
 
 # --- [1. 설정 및 라이브러리 확인] ---
 try:
@@ -366,5 +371,103 @@ def uploads(path):
 def help_page():
     return render_template('help.html')
 
+
+def init_cloudflare_tunnel(port):
+    """
+    1. cloudflared.exe가 없으면 다운로드
+    2. 터널 프로세스 실행
+    3. 생성된 외부 접속 URL 파싱하여 반환
+    """
+    cf_filename = "cloudflared.exe"
+    cf_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+
+    # 1. 실행 파일 확인 및 다운로드
+    if not os.path.exists(cf_filename):
+        print(f"⬇️ Cloudflare 실행 파일이 없습니다. 다운로드를 시작합니다... ({cf_filename})")
+        try:
+            with requests.get(cf_url, stream=True) as r:
+                r.raise_for_status()
+                with open(cf_filename, 'wb') as f:
+                    shutil.copyfileobj(r.raw, f)
+            print("✅ 다운로드 완료!")
+        except Exception as e:
+            print(f"❌ 다운로드 실패: {e}")
+            return None
+
+    # 2. 터널 실행 (로그에서 URL을 찾기 위해 subprocess 사용)
+    print("Cloudflare Tunnel을 시작합니다...")
+    
+    # 기존에 실행 중인 cloudflared가 있다면 충돌 방지를 위해 종료 시도 (선택 사항)
+    os.system("taskkill /f /im cloudflared.exe >nul 2>&1")
+
+    cmd = [cf_filename, "tunnel", "--url", f"http://localhost:{port}"]
+    
+    # 프로세스 시작
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding='utf-8', 
+        errors='replace' # 인코딩 에러 방지
+    )
+
+    # 3. 로그에서 URL 추출
+    tunnel_url = None
+    start_time = time.time()
+    
+    # 10초 동안 로그를 분석하여 URL 찾기
+    while time.time() - start_time < 15:
+        line = process.stderr.readline()
+        if not line:
+            break
+        
+        # URL 패턴 찾기 (trycloudflare.com)
+        match = re.search(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', line)
+        if match:
+            tunnel_url = match.group(0)
+            break
+            
+    if tunnel_url:
+        return tunnel_url
+    else:
+        print("⚠️ 터널 URL을 찾지 못했습니다. (잠시 후 다시 시도하거나 로그를 확인하세요)")
+        return None
+
+# --- [메인 실행부 수정] ---
+from waitress import serve
+import socket
+
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=5000, threaded=True)
+    PORT = 5000
+
+    # 1. 내부 IP 찾기
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        host_ip = s.getsockname()[0]
+        s.close()
+    except:
+        host_ip = "127.0.0.1"
+
+    print("=" * 60)
+    print(f"🚀 [서버 시작] Waitress WSGI Server Running...")
+    
+    # 2. Cloudflare 터널 시작 (비동기적으로 실행됨)
+    # 터널링은 별도 프로세스로 돌고 있으므로, URL만 따오고 서버를 켭니다.
+    public_url = init_cloudflare_tunnel(PORT)
+
+    print("-" * 60)
+    if public_url:
+        print(f"🌍 [외부 접속 주소] : {public_url}")
+        print(f"   (이 주소를 팀원들에게 공유하세요. 전 세계 어디서든 접속 가능)")
+    else:
+        print("❌ Cloudflare 터널 생성 실패. (방화벽 설정이나 인터넷 연결을 확인하세요)")
+    
+    print("-" * 60)
+    print(f"🏠 [로컬 접속 주소] : http://{host_ip}:{PORT}")
+    print(f"👥 최대 동시 접속 : 10명")
+    print("=" * 60)
+
+    # 3. 웹 서버 실행
+    serve(app, host='0.0.0.0', port=PORT, threads=10, channel_timeout=3000)
