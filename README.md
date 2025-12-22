@@ -1,237 +1,163 @@
-```md
-# ScanBot (Windows) — YOLO + Windows OCR 기반 번호판 인식/단속 기록 웹앱
+제공해주신 `ocr.py` 코드는 **Flask 웹 프레임워크**, **YOLO 객체 인식**, **Windows 내장 OCR**을 결합하여 **주차 단속 및 차량 번호판 인식 시스템**을 구축하는 전체 소스 코드입니다.
 
-이 프로젝트는 **Flask 웹페이지에서 사진(여러 장)을 업로드**하면, 각 이미지에서 **YOLO로 번호판 후보 영역을 찾고 → Windows OCR(winsdk)로 문자 인식**을 수행한 뒤 결과를 보여주고, 선택한 항목을 **엑셀(.xlsx)**로 저장하는 Windows용 웹앱입니다.
-
-> 실행 엔트리: `ocr.py`  
-> 실행 스크립트: `start.bat`  
-> 모델 파일: `best.pt` (없으면 `yolov8n.pt` 사용)
+이 프로젝트에 적합한 상세한 `README.md` 문서를 작성해 드립니다. 이 문서는 프로젝트의 목적, 설치 방법, 사용법, 기술적 구조 등을 포괄합니다.
 
 ---
 
-## 1) 주요 기능
+# 🚗 주차 단속 및 번호판 자동 인식 시스템 (ALPR Web Service)
 
-- **웹 로그인(간단 비밀번호 방식)**
-  - `/login`에서 비밀번호 입력 후 세션 기반 접근
-  - 미로그인 시 주요 페이지 접근 차단
+이 프로젝트는 **Windows 기반 PC**에서 동작하는 웹 기반 차량 번호판 인식 시스템입니다. 사용자가 촬영한 주차 위반 차량 사진을 업로드하면, AI(YOLO)가 번호판을 찾고 Windows OCR 엔진이 번호를 판독하여 엑셀 리포트로 자동 변환해 줍니다.
 
-- **다중 이미지 업로드 & 백그라운드 처리**
-  - 한 번에 여러 장 업로드(`photos`) 가능
-  - 업로드 후 **백그라운드 스레드**가 순차 처리하며 진행률 제공
+## ✨ 주요 기능
 
-- **YOLO 기반 번호판 후보 추출**
-  - `best.pt`가 있으면 커스텀 모델 사용
-  - 없으면 `yolov8n.pt`(기본 모델)로 동작 (정확도 낮을 수 있음)
-  - 후보를 만들 때 **감지 박스 + 여백(padding)** 및 **전체 이미지(full scan)**도 후보로 포함
+* **웹 기반 인터페이스**: 별도의 설치 없이 브라우저(PC/모바일)를 통해 접속하여 사진을 업로드하고 결과를 확인할 수 있습니다.
+* **강력한 인식 파이프라인**:
+* **YOLOv8**: 이미지 내에서 차량 번호판의 위치를 정확하게 탐지합니다.
+* **Windows Media OCR**: 로컬 Windows 엔진을 사용하여 빠르고 정확하게 한글/숫자를 인식합니다.
+* **이미지 전처리**: CLAHE(대비 향상), 이진화, 노이즈 제거 등을 통해 인식률을 극대화합니다.
 
-- **이미지 전처리 + Windows OCR(winsdk)**
-  - 대비 향상(CLAHE), adaptive threshold, dilation, invert 등 다양한 전처리 조합
-  - OCR은 `winsdk.windows.media.ocr` 기반
-  - 언어 설정: `ko-KR` (한국어 OCR 엔진)
 
-- **결과 페이지 제공**
-  - 파일명 / 인식된 번호 / 업로드 이미지 미리보기 URL 제공
-  - 인식 실패 시 빈 값 또는 “인식실패” 형태로 표시될 수 있음
+* **자동 보정 알고리즘**:
+* OCR 오인식 문자 자동 변환 (예: `O` → `0`, `S` → `5`, `I` → `1`)
+* 대한민국 번호판 정규식(`12가3456` 등) 매칭 및 검증
+* 파편화된 텍스트 자동 조합(Stitching)
 
-- **엑셀 저장**
-  - 결과에서 선택된 항목을 엑셀로 누적 저장
-  - 파일명 예: `주차단속내역_YYYY-MM-DD.xlsx`
-  - 컬럼: `날짜`, `단속위치`, `사유`, `차량번호`
 
-- **Cloudflare Tunnel 자동 실행(옵션)**
-  - `cloudflared.exe`가 없으면 자동 다운로드 후 `trycloudflare.com` 공개 URL를 콘솔에 출력
-  - 실패해도 로컬 접속은 가능
+* **보고서 자동화**: 인식된 결과를 날짜, 시간, 위반 사유별로 정리하여 **Excel(.xlsx)** 파일로 저장합니다.
+* **외부 접속 지원**: Cloudflare Tunnel을 내장하여, 포트포워딩 없이 외부망(LTE/5G)에서도 접속 가능한 URL을 생성합니다.
+* **멀티스레딩**: 대량의 이미지를 백그라운드에서 비동기적으로 처리합니다.
 
----
+## 🛠 기술 스택
+
+* **Language**: Python 3.8+
+* **Web Framework**: Flask, Waitress (Production Server)
+* **AI/CV**: Ultralytics YOLOv8, OpenCV, NumPy
+* **OCR**: Windows SDK (winsdk.windows.media.ocr)
+* **Data**: Pandas, OpenPyXL
+* **Network**: Cloudflare Tunnel (`cloudflared`)
 
 ---
 
-## 2) 동작 흐름(한 눈에 보기)
+## 💻 설치 및 실행 가이드
 
-1. 사용자가 `/login`에서 비밀번호로 로그인
-2. `/`(index)에서 **단속위치/사유/오전·오후** 선택 후 사진 업로드
-3. 서버가 업로드 파일을 `uploads/...`에 저장하고 `task_id` 생성
-4. 백그라운드 스레드가 각 파일에 대해 반복:
-   - `detect_best_plate(path)` 수행
-   - YOLO로 후보 영역 생성 → 후보별로 `process_and_ocr()`로 전처리 + OCR 시도
-   - 가장 먼저 “성공”한 번호판을 해당 이미지 결과로 확정
-5. `/status/<task_id>`로 진행률을 폴링(프론트에서 주기적으로 확인)
-6. 완료 시 `/result_view/<task_id>`에서 결과 목록 표시
-7. 저장 버튼으로 `/save` 호출 → 오늘 날짜 엑셀 파일에 누적 기록
+### 1. 필수 요구 사항 (Prerequisites)
 
----
+> ⚠️ **중요**: 이 시스템은 **Windows 10 또는 Windows 11** 운영체제에서만 작동합니다. (Windows 내장 OCR 엔진 사용)
 
-## 4) 요구사항(권장)
+* Python 3.8 이상 설치
+* Windows 개발자 모드 권장 (선택 사항)
 
-### OS
-- **Windows 10/11 권장**
-  - Windows OCR(winsdk) 사용을 전제로 구성되어 있습니다.
+### 2. 라이브러리 설치
 
-### Python
-- Python 3.10+ 권장 (코드상 별도 제한은 없으나 최신 환경 권장)
-
-### 주요 파이썬 패키지
-- `flask`
-- `waitress`
-- `ultralytics` (YOLO)
-- `opencv-python` (`cv2`)
-- `numpy`
-- `pandas` (엑셀 저장/읽기)
-- `openpyxl` (pandas가 xlsx 다룰 때 필요할 수 있음)
-- `requests`
-- `winsdk` (**Windows OCR 필수**)
-
-> 참고: `ultralytics`는 내부적으로 PyTorch가 필요할 수 있습니다. 설치 환경에 따라 추가 의존성(특히 CUDA/CPU)이 달라집니다.
-
----
-
-## 5) 설치 방법
-
-### 1) 가상환경(선택)
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-````
-
-### 2) 패키지 설치(예시)
+프로젝트 폴더에서 터미널을 열고 아래 명령어로 필수 패키지를 설치합니다.
 
 ```bash
-pip install flask waitress ultralytics opencv-python numpy pandas openpyxl requests winsdk
+pip install flask waitress opencv-python numpy pandas ultralytics winsdk requests openpyxl
+
 ```
 
----
+> **참고**: `winsdk` 설치 시 에러가 발생하면, Visual Studio C++ Build Tools가 설치되어 있는지 확인하세요.
 
-## 6) 실행 방법
+### 3. YOLO 모델 파일 준비
 
-### A. 배치 파일로 실행(권장)
+* 사용자 학습된 모델(`best.pt`)이 있다면 프로젝트 루트 폴더에 위치시킵니다.
+* 파일이 없으면 실행 시 자동으로 기본 모델(`yolov8n.pt`)을 다운로드하여 사용하지만, 번호판 인식률이 다소 떨어질 수 있습니다.
 
-```bat
-start.bat
-```
-
-### B. 직접 실행
+### 4. 서버 실행
 
 ```bash
 python ocr.py
+
 ```
 
-실행하면 콘솔에 다음이 출력됩니다.
+실행하면 콘솔에 다음과 같은 정보가 출력됩니다:
 
-* 보안 모드 적용 메시지(비밀번호)
-* Cloudflare tunnel 성공 시 외부 URL (`https://xxxx.trycloudflare.com`)
-* 로컬 접속 주소 (`http://<내부IP>:<PORT>`)
-
----
-
-## 7) 접속 & 사용 방법
-
-1. 브라우저에서 서버 주소 접속
-
-   * 로컬: `http://localhost:<PORT>` 또는 콘솔에 출력된 로컬 주소
-   * 외부: 콘솔에 출력된 `trycloudflare.com` 주소(성공한 경우)
-
-2. 로그인 페이지에서 비밀번호 입력
-
-3. 메인 화면(`/`)에서
-
-   * 단속위치 선택
-   * 사유 선택
-   * 오전/오후 선택
-   * 사진 다중 업로드 후 실행
-
-4. 진행 화면(`/result_view/<task_id>` 또는 progress 페이지)에서 완료까지 대기
-
-5. 결과 화면에서 필요한 항목 저장
+* 로컬 접속 주소: `http://127.0.0.1:5000`
+* 외부 접속 주소: `https://[랜덤문자열].trycloudflare.com` (Cloudflare 터널 성공 시)
 
 ---
 
-## 8) 설정 방법(중요)
+## 📖 사용 방법
 
-### 1) 로그인 비밀번호 변경
+1. **로그인**:
+* 브라우저로 접속 주소에 들어갑니다.
+* 초기 비밀번호 **`1234`**를 입력합니다. (코드 내 `SYSTEM_PASSWORD` 변수에서 변경 가능)
 
-`ocr.py` 상단의 설정 구역에서 변경합니다.
 
-* `SYSTEM_PASSWORD = "1234"` 값을 원하는 비밀번호로 수정하세요.
-* `app.secret_key`도 운영 시에는 반드시 변경 권장
+2. **이미지 업로드**:
+* 단속 위치(동/호수)와 위반 사유를 선택합니다.
+* `파일 선택` 버튼을 눌러 번호판이 찍힌 사진들을 선택하고 `분석 시작`을 클릭합니다.
 
-### 2) YOLO 모델 변경
 
-* 기본: `Windows/best.pt`가 존재하면 그 모델을 로드
-* 없으면 `yolov8n.pt`로 로드
+3. **결과 확인 및 수정**:
+* 분석이 완료되면 번호판 인식 결과가 표시됩니다.
+* 인식이 잘못된 경우 수동으로 번호를 수정할 수 있습니다.
 
-원하는 커스텀 모델을 사용하려면 `best.pt`를 해당 위치에 두면 됩니다.
 
-### 3) 포트/서버 설정
+4. **저장**:
+* `결과 저장` 버튼을 누르면 서버의 `Excel` 파일에 내용이 누적 저장됩니다.
+* `리포트` 메뉴에서 저장된 엑셀 파일을 다운로드할 수 있습니다.
 
-* 서버 실행은 `waitress.serve(... threads=10 ...)` 형태로 동작합니다.
-* 포트는 `ocr.py` 하단의 `PORT` 설정(또는 코드 내부 기본값)에 의해 결정됩니다.
 
----
-
-## 9) 웹 라우트(API) 정리
-
-* `GET /login` : 로그인 페이지
-* `POST /login` : 비밀번호 로그인
-* `GET /logout` : 로그아웃
-* `GET /` : 메인 업로드 페이지
-* `POST /upload` : 사진 업로드 및 task 생성
-* `GET /status/<task_id>` : 진행 상태(JSON)
-
-  * 응답 예: `{status, current, total, last_processed}`
-* `GET /result_view/<task_id>` : 결과 페이지(처리 중이면 자동 새로고침)
-* `POST /save` : 결과를 엑셀로 저장
-* `GET /uploads/<path:path>` : 업로드된 이미지 정적 제공
-* `GET /help` : 도움말 페이지
 
 ---
 
-## 10) 트러블슈팅
+## 📂 프로젝트 구조
 
-### 1) `winsdk` 관련 오류
+```text
+📦 Project Root
+ ┣ 📂 uploads              # 업로드된 원본 이미지가 날짜/위치별로 저장됨
+ ┣ 📂 templates            # Flask HTML 템플릿 (index.html, result.html 등)
+ ┣ 📜 ocr.py               # 메인 애플리케이션 소스 코드
+ ┣ 📜 best.pt              # (권장) 번호판 학습된 YOLO 모델
+ ┣ 📜 yolov8n.pt           # (자동다운) 기본 YOLO 모델
+ ┣ 📜 cloudflared.exe      # (자동다운) 외부 접속용 터널 프로그램
+ ┗ 📜 주차단속내역_xxxx.xlsx  # 생성된 결과 엑셀 파일
 
-* 메시지: `❌ 필수: 'winsdk' 라이브러리가 필요합니다. (pip install winsdk)`
-* 해결:
-
-  * `pip install winsdk` 설치
-  * Windows 환경에서 실행(특히 OCR 기능은 Windows 의존)
-
-### 2) YOLO 기본 모델로만 동작(정확도 낮음)
-
-* 콘솔에 `⚠️ 기본 모델(yolov8n.pt) 로드...`가 뜨면 `best.pt`가 없는 상태입니다.
-* 해결:
-
-  * 커스텀 학습 모델 `best.pt`를 `ocr.py`와 같은 폴더에 배치
-
-### 3) Cloudflare Tunnel 실패
-
-* 콘솔에 `❌ Cloudflare 터널 실패 (로컬 접속만 가능)`이 떠도 기능 자체는 정상 동작합니다.
-* 해결:
-
-  * 방화벽/네트워크 정책 확인
-  * GitHub 릴리즈 다운로드 차단 여부 확인
-  * 로컬 URL로 사용
-
-### 4) 엑셀 저장 오류
-
-* 저장 시 `엑셀 저장 오류: ...`가 뜨면,
-
-  * 파일이 다른 프로그램(엑셀 등)에서 열려 잠금 상태일 수 있습니다.
-* 해결:
-
-  * 해당 날짜의 `주차단속내역_YYYY-MM-DD.xlsx`를 닫고 다시 저장
+```
 
 ---
 
-## 11) 개발 메모(성능/정확도 관련)
+## ⚙️ 환경 설정 (Configuration)
 
-* 인식 로직은 “**후보 영역 여러 개** + **전체 이미지 후보**”를 포함하여,
-  먼저 성공하는 결과를 채택하는 구조입니다.
-* 전처리(Threshold/Dilate/Invert 등)를 여러 변형으로 시도해 OCR 성공률을 높입니다.
-* 처리 시간 제한(`timeout`)이 있어, 너무 오래 걸리면 중단될 수 있습니다.
+`ocr.py` 파일 상단의 설정 구역을 수정하여 커스터마이징할 수 있습니다.
+
+```python
+# ==========================================
+# 🔒 [보안 설정 구역]
+# ==========================================
+SYSTEM_PASSWORD = "1234"  # 로그인 비밀번호 변경
+app.secret_key = "..."    # 세션 암호화 키 (임의 변경 권장)
+
+# --- [YOLO 모델 경로] ---
+YOLO_MODEL_PATH = os.path.join(BASE_DIR, 'best.pt') # 모델 파일명 변경 시 수정
+
+```
 
 ---
 
-## 12) 라이선스 / 고지
+## 🔍 문제 해결 (Troubleshooting)
 
-사용된 best.pt
+**Q. `ModuleNotFoundError: No module named 'winsdk'` 오류가 납니다.**
+
+* A. `pip install winsdk`를 실행하세요. 이 라이브러리는 Windows OS에서만 설치 가능합니다.
+
+**Q. 외부 접속 URL이 생성되지 않습니다.**
+
+* A. 처음 실행 시 `cloudflared.exe`를 다운로드하는 데 시간이 걸릴 수 있습니다. 인터넷 연결을 확인하고 방화벽이 차단하지 않는지 확인하세요.
+
+**Q. OCR 인식률이 너무 낮습니다.**
+
+* A.
+1. 사진 촬영 시 번호판이 너무 작거나 흐리지 않게 찍어주세요.
+2. `best.pt` 모델이 번호판 영역만 정확히 자르도록 학습된 모델인지 확인하세요.
+3. 코드 내 `process_and_ocr` 함수의 전처리 필터 순서를 조정해 볼 수 있습니다.
+
+
+
+---
+
+## 📝 라이선스 및 저작권
+
+사용된 best.pt 파일 
 https://github.com/MuhammadMoinFaisal/Computervisionprojects/tree/main/ANPR_YOLOv10/weights
