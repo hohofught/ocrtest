@@ -46,26 +46,6 @@
 
 ## 2) 프로젝트 구조
 
-```
-
-Windows/
-├─ ocr.py                  # Flask 서버 + YOLO + OCR 핵심 로직
-├─ start.bat               # 실행 배치 파일(ocr.py 실행)
-├─ best.pt                 # 커스텀 YOLO 모델(선택)
-├─ uploads/                # 실행 중 업로드 이미지 저장 폴더(자동 생성)
-├─ templates/              # HTML 템플릿
-│  ├─ login.html
-│  ├─ index.html
-│  ├─ progress.html
-│  ├─ result.html
-│  ├─ help.html
-│  ├─ changelog.html
-│  ├─ report.html
-│  └─ success.html
-└─ static/
-
-
-```
 
 업로드 저장 경로는 코드에서 다음 규칙으로 자동 생성됩니다.
 
