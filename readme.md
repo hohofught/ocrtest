@@ -1,5 +1,5 @@
 ```markdown
-# 📸 주차 단속 시스템 (Parking Enforcement OCR)
+# 📸 주차 단속 시스템 (Parking Enforcement OCR) 2.0V
 
 이 프로젝트는 주차 단속 현장 사진을 업로드하여 **차량 번호판을 자동으로 인식(OCR)**하고, 단속 내역을 **Excel 파일로 자동 저장**하는 웹 기반 시스템입니다. Flask 웹 서버와 YOLOv8 객체 인식 모델, 그리고 전용 OCR 엔진(DLL)을 사용합니다.
 
@@ -110,14 +110,14 @@ REASONS = ["주차선 위반", "장애인 구역 위반", ...]
 
 ## 사용된 파일들
 
-`best.pt 파일`
-`https://github.com/MuhammadMoinFaisal/Computervisionprojects/tree/main/ANPR_YOLOv10/weights`
-
-`oneocr.dll`
-`oneocr.onemodel`
-`onnxruntime.dll`
-`https://github.com/killkimno/MORT_VERSION/releases/download/oneocr/oneocr.zip`
-
 ```
+best.pt 파일
+https://github.com/MuhammadMoinFaisal/Computervisionprojects/tree/main/ANPR_YOLOv10/weights
+
+oneocr.dll
+oneocr.onemodel
+onnxruntime.dll
+https://github.com/killkimno/MORT_VERSION/releases/download/oneocr/oneocr.zip
+
 
 ```
