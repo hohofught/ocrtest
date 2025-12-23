@@ -626,11 +626,14 @@ def save():
 
         except Exception as e:
             return f"<h3>❌ 치명적 저장 오류</h3><p>{str(e)}</p>", 500
+    
+    # [수정된 부분] 백업 파일의 경로를 상대 경로로 올바르게 전달
+    backup_relative_path = os.path.join('backup', today_str, backup_filename)
 
     return render_template(
         'success.html', 
         count=len(entries), 
-        excel_file=root_filename if main_status == "성공" else backup_filename,
+        excel_file=root_filename if main_status == "성공" else backup_relative_path,
         report_text=report_text,
         extra_message="<br>".join(messages)
     )
