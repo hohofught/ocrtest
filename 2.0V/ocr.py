@@ -40,11 +40,14 @@ DLL_NAME = 'oneocr.dll'
 MODEL_KEY = b"kj)TGtrK>f]b[Piow.gU+nC@s\"\"\"\"\"\"4"
 
 # ==========================================
-# [보안 설정]
-# 비밀번호를 비워두면("") 외부 접속도 비밀번호 없이 통과됩니다.
+# [보안 설정 & 디스코드 알림]
 # ==========================================
 SYSTEM_PASSWORD = ""  
 SECRET_KEY = "super_secret_security_key_change_this"
+
+# ▼▼▼ [추가됨] 디스코드 웹훅 URL을 이곳에 입력하세요 ▼▼▼
+DISCORD_WEBHOOK_URL = "" 
+# 예: "https://discord.com/api/webhooks/123456789/abcdefg..."
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -231,24 +234,20 @@ REASONS = [
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # 1. 시스템 비밀번호가 없는 경우 무조건 통과
         if not SYSTEM_PASSWORD:
             session['logged_in'] = True
             return f(*args, **kwargs)
 
-        # 2. 이미 로그인된 세션인 경우 통과
         if session.get('logged_in'):
             return f(*args, **kwargs)
         
-        # 3. 로컬 접속(127.0.0.1) 자동 통과 처리
         is_localhost = request.remote_addr == '127.0.0.1'
         is_cloudflare = request.headers.get('CF-Ray') is not None
         
         if is_localhost and not is_cloudflare:
-            session['logged_in'] = True # 로컬은 자동 로그인
+            session['logged_in'] = True 
             return f(*args, **kwargs)
 
-        # 4. 외부 접속(Cloudflare)이면서 로그인이 안 된 경우 로그인 페이지로
         return redirect(url_for('login'))
         
     return decorated_function
@@ -627,7 +626,6 @@ def save():
         except Exception as e:
             return f"<h3>❌ 치명적 저장 오류</h3><p>{str(e)}</p>", 500
     
-    # [수정된 부분] 백업 파일의 경로를 상대 경로로 올바르게 전달
     backup_relative_path = os.path.join('backup', today_str, backup_filename)
 
     return render_template(
@@ -694,6 +692,33 @@ def report_page():
 # ==========================================
 # 6. 서버 실행 및 터널링
 # ==========================================
+
+# [추가됨] 디스코드 웹훅 전송 함수
+def send_discord_webhook(tunnel_url):
+    if not DISCORD_WEBHOOK_URL:
+        return
+    
+    data = {
+        "username": "OCR Server Bot",
+        "embeds": [{
+            "title": "🚀 단속 서버가 시작되었습니다.",
+            "description": "외부에서 접속 가능한 링크가 생성되었습니다.",
+            "color": 65280, # Green color
+            "fields": [
+                {"name": "🌍 외부 접속 URL", "value": tunnel_url, "inline": False},
+                {"name": "🏠 로컬 URL", "value": f"http://127.0.0.1:5000", "inline": False},
+                {"name": "🔒 보안 모드", "value": "활성화" if SYSTEM_PASSWORD else "비활성화 (공개)", "inline": True}
+            ],
+            "footer": {"text": f"Started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"}
+        }]
+    }
+
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json=data)
+        print("📨 [Discord] 웹훅 전송 완료")
+    except Exception as e:
+        print(f"⚠️ [Discord] 웹훅 전송 실패: {e}")
+
 def init_cloudflare_tunnel(port):
     cf_filename = "cloudflared.exe"
     cf_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
@@ -731,7 +756,7 @@ if __name__ == '__main__':
     HOST_IP = '127.0.0.1' 
     
     print("=" * 60)
-    print(f"🚀 [서버 시작] 보안 모드 (v2.0 Updated)")
+    print(f"🚀 [서버 시작] 보안 모드 (v2.1 Updated)")
     if SYSTEM_PASSWORD:
         print(f"🔑 외부 접속 비밀번호: {SYSTEM_PASSWORD}")
     else:
@@ -743,6 +768,8 @@ if __name__ == '__main__':
     print("-" * 60)
     if public_url:
         print(f"🌍 [외부 접속 주소] : {public_url}")
+        # [추가됨] 웹훅 전송 호출
+        send_discord_webhook(public_url)
     else:
         print("❌ Cloudflare 터널 실패 (로컬 접속만 가능)")
 
