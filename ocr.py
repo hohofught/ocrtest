@@ -1,6 +1,9 @@
 import os
 import sys
 
+os.environ.setdefault("ULTRALYTICS_SKIP_REQUIREMENTS_CHECKS", "1")
+os.environ.setdefault("YOLO_AUTOINSTALL", "false")
+
 if __name__ == "__main__":
     # gui.py imports "ocr"; keep it bound to this process' main module so OCR/YOLO init runs once.
     sys.modules.setdefault("ocr", sys.modules[__name__])
@@ -145,6 +148,7 @@ def is_pyinstaller_bundle():
     return getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
 
 ocr_dll = None
+dll_directory_handle = None
 try:
     # 1. DLL 폴더 경로 설정 (PyInstaller 환경 고려)
     if is_pyinstaller_bundle():
@@ -178,7 +182,7 @@ try:
 
     # 4. PATH 환경변수에 DLL 폴더 추가 (의존성 문제 해결)
     if os.path.exists(dll_dir):
-        os.add_dll_directory(dll_dir)
+        dll_directory_handle = os.add_dll_directory(dll_dir)
         os.environ['PATH'] = dll_dir + ';' + os.environ['PATH']
 
     if not os.path.exists(dll_path):

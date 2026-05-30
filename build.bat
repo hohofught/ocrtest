@@ -54,13 +54,13 @@ echo.
 
 :: 3. 의존성 패키지 설치
 echo [3/5] 의존성 패키지 설치 중...
-pip install -r requirements.txt -q
+python -m pip install -r requirements.txt -q
 if errorlevel 1 (
     echo 오류: 패키지 설치 실패
     pause
     exit /b 1
 )
-pip install pyinstaller -q
+python -m pip install pyinstaller -q
 echo 의존성 설치 완료
 echo.
 
@@ -74,7 +74,9 @@ echo.
 :: 5. PyInstaller 빌드 실행
 echo [5/5] EXE 빌드 중... (시간이 다소 소요됩니다)
 echo.
-python -m PyInstaller build.spec --noconfirm
+set ULTRALYTICS_SKIP_REQUIREMENTS_CHECKS=1
+set YOLO_AUTOINSTALL=false
+python -m PyInstaller build.spec --noconfirm --clean
 if errorlevel 1 (
     echo.
     echo 빌드 실패! 오류 메시지를 확인하세요.
