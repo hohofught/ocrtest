@@ -71,7 +71,7 @@ class SettingsManager:
                             self._settings[key] = value
                 return True
         except Exception as e:
-            print(f"⚠️ 설정 로드 실패: {e}")
+            print(f"설정 로드 실패: {e}")
         return False
     
     def save(self) -> bool:
@@ -86,7 +86,7 @@ class SettingsManager:
                 json.dump(self._settings, f, ensure_ascii=False, indent=2)
             return True
         except Exception as e:
-            print(f"⚠️ 설정 저장 실패: {e}")
+            print(f"설정 저장 실패: {e}")
         return False
     
     def get(self, key: str, default: Any = None) -> Any:

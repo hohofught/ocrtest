@@ -1,4 +1,4 @@
-# 🚗 주차 단속 시스템 (Parking Enforcement System)
+# 주차 단속 시스템 (Parking Enforcement System)
 
 > 주차 단속 현장 사진에서 **차량 번호판을 자동으로 인식(OCR)**하고, 단속 내역을 **Excel 파일로 자동 저장**하는 웹 기반 시스템
 
@@ -6,7 +6,7 @@
 
 ---
 
-## ✨ 주요 기능
+## 주요 기능
 
 | 기능 | 설명 |
 |------|------|
@@ -20,7 +20,7 @@
 
 ---
 
-## 📥 다운로드 및 설치
+## 다운로드 및 설치
 
 ### 방법 1: 릴리즈에서 EXE 다운로드 (권장)
 
@@ -28,7 +28,7 @@
 2. 더블클릭으로 실행
 3. GUI 앱이 열리면 바로 사용 시작
 
-> ⚠️ 첫 실행 시 Windows Defender가 검사할 수 있습니다 (1~2분 소요)
+> 첫 실행 시 Windows Defender가 검사할 수 있습니다 (1~2분 소요)
 
 ### 방법 2: 소스코드에서 직접 실행
 
@@ -49,7 +49,7 @@ python ocr.py --server
 
 ---
 
-## 🚀 실행 모드
+## 실행 모드
 
 | 모드 | 명령어 | 설명 |
 |------|--------|------|
@@ -63,31 +63,31 @@ python ocr.py --server
 
 ---
 
-## ⚙️ 설정 변경
+## 설정 변경
 
 `ocr.py` 파일 상단에서 설정 변경 가능:
 
 ```python
-# 🔒 보안 비밀번호 (빈 문자열 = 비밀번호 없음)
+# 보안 비밀번호 (빈 문자열 = 비밀번호 없음)
 SYSTEM_PASSWORD = ""
 
-# 📍 단속 위치 목록
+# 단속 위치 목록
 LOCATIONS = ["1동", "2동", "3동", "4동", "5동", ...]
 
-# 📋 단속 사유 목록
+# 단속 사유 목록
 REASONS = ["주차선 외 위반", "장애인 구역 위반", ...]
 
-# 🔔 Discord 웹훅 URL (선택사항)
+# Discord 웹훅 URL (선택사항)
 DISCORD_WEBHOOK_URL = ""
 
-# 🌐 고정 도메인 Cloudflare Tunnel (선택사항)
+# 고정 도메인 Cloudflare Tunnel (선택사항)
 CLOUDFLARE_TUNNEL_TOKEN = ""
 CLOUDFLARE_TUNNEL_DOMAIN = "parking.example.com"
 ```
 
 ---
 
-## 📦 직접 빌드하기
+## 직접 빌드하기
 
 ### 로컬 빌드
 
@@ -106,34 +106,33 @@ git tag v2.0.0
 git push origin v2.0.0
 ```
 
-자동으로 OCR DLL 다운로드 → PyInstaller 빌드 → GitHub Release 생성
+자동으로 OCR DLL 다운로드 -> PyInstaller 빌드 -> GitHub Release 생성
 
 ---
 
-## 📂 폴더 구조
+## 폴더 구조
 
 ```
 ocrtest/
-├── ocr.py               # 메인 서버 코드
-├── gui.py               # GUI 인터페이스
-├── dll_extractor.py     # DLL 자동 추출 모듈
-├── settings_manager.py  # 설정 관리
-├── requirements.txt     # Python 의존성
-├── build.spec           # PyInstaller 빌드 설정
-├── build.bat            # 빌드 스크립트
-├── best.pt              # YOLO 모델 (번호판 탐지)
-├── dlls/                # [자동생성] OCR 엔진 DLL
-├── templates/           # HTML 템플릿
-├── static/              # 정적 리소스
-├── uploads/             # [자동생성] 업로드된 이미지
-│
-└── .github/workflows/   # GitHub Actions 설정
-    └── build-release.yml
++-- ocr.py               # 메인 서버 코드
++-- gui.py               # GUI 인터페이스
++-- dll_extractor.py     # DLL 자동 추출 모듈
++-- settings_manager.py  # 설정 관리
++-- requirements.txt     # Python 의존성
++-- build.spec           # PyInstaller 빌드 설정
++-- build.bat            # 빌드 스크립트
++-- best.pt              # YOLO 모델 (번호판 탐지)
++-- dlls/                # [자동생성] OCR 엔진 DLL
++-- templates/           # HTML 템플릿
++-- static/              # 정적 리소스
++-- uploads/             # [자동생성] 업로드된 이미지
++-- .github/workflows/   # GitHub Actions 설정
+    +-- build-release.yml
 ```
 
 ---
 
-## ⚠️ 트러블슈팅
+## 트러블슈팅
 
 ### "oneocr.dll을 찾을 수 없습니다" 오류
 
@@ -158,7 +157,7 @@ ocrtest/
 
 ---
 
-## 🔧 기술 스택
+## 기술 스택
 
 | 구성요소 | 기술 |
 |----------|------|
@@ -172,7 +171,7 @@ ocrtest/
 
 ---
 
-## 📝 사용된 오픈소스
+## 사용된 오픈소스
 
 | 구성요소 | 출처 |
 |----------|------|
@@ -181,6 +180,6 @@ ocrtest/
 
 ---
 
-## 📜 라이선스
+## 라이선스
 
 이 프로젝트는 교육 및 내부 사용 목적으로 제작되었습니다.

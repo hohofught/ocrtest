@@ -1,9 +1,15 @@
 import os
 import sys
+
+if __name__ == "__main__":
+    # gui.py imports "ocr"; keep it bound to this process' main module so OCR/YOLO init runs once.
+    sys.modules.setdefault("ocr", sys.modules[__name__])
+
 import shutil
 import re
 import threading
 import urllib.parse
+import queue
 import cv2
 import numpy as np
 import uuid
@@ -144,7 +150,7 @@ try:
     if is_pyinstaller_bundle():
         # EXE로 실행 중: 번들된 DLL 사용
         dll_dir = os.path.join(sys._MEIPASS, 'dlls')
-        print(f"📦 EXE 모드: 번들된 DLL 사용")
+        print("EXE 모드: 번들된 DLL 사용")
     else:
         # 소스로 실행 중: dlls 폴더 사용
         dll_dir = os.path.join(BASE_DIR, 'dlls')
@@ -156,9 +162,9 @@ try:
         from dll_extractor import extract_oneocr_dlls, check_existing_dlls
         
         if not check_existing_dlls(dll_dir_path):
-            print("\n📦 DLL 파일이 없습니다. 자동 추출을 시도합니다...")
+            print("\nDLL 파일이 없습니다. 자동 추출을 시도합니다...")
             if not extract_oneocr_dlls(dest_dir=dll_dir):
-                print("\n💡 DLL 수동 설치 방법:")
+                print("\nDLL 수동 설치 방법:")
                 print("   1. Microsoft Store에서 'Snipping Tool' 앱 설치")
                 print("   2. 또는 아래 경로에서 수동으로 파일 복사:")
                 print("      C:\\Program Files\\WindowsApps\\Microsoft.ScreenSketch_*\\SnippingTool\\")
@@ -176,7 +182,7 @@ try:
         os.environ['PATH'] = dll_dir + ';' + os.environ['PATH']
 
     if not os.path.exists(dll_path):
-        print(f"❌ 오류: {DLL_NAME} 파일을 찾을 수 없습니다.")
+        print(f"오류: {DLL_NAME} 파일을 찾을 수 없습니다.")
         print(f"   탐색 경로: {dll_dir}")
         sys.exit(1)
         
@@ -187,10 +193,10 @@ try:
             func.argtypes = argtypes
             func.restype = restype
         else:
-            print(f"⚠️ 경고: DLL 함수 '{name}'를 찾을 수 없습니다.")
-    print(f"✅ Custom OCR DLL 로드 성공")
+            print(f"경고: DLL 함수 '{name}'를 찾을 수 없습니다.")
+    print("Custom OCR DLL 로드 성공")
 except Exception as e:
-    print(f"❌ DLL 초기화 실패: {e}")
+    print(f"DLL 초기화 실패: {e}")
     sys.exit(1)
 
 # ==========================================
@@ -298,18 +304,18 @@ class OcrEngine:
 
 try:
     global_ocr = OcrEngine()
-    print(f"✅ OCR 엔진 초기화 완료")
+    print("OCR 엔진 초기화 완료")
 except Exception as e:
-    print(f"❌ OCR 엔진 초기화 실패: {e}")
+    print(f"OCR 엔진 초기화 실패: {e}")
     sys.exit(1)
 
 # YOLO 모델 로드
 YOLO_MODEL_PATH = os.path.join(BASE_DIR, 'best.pt')
 if os.path.exists(YOLO_MODEL_PATH):
-    print(f"✅ YOLO 모델 로드: {YOLO_MODEL_PATH}")
+    print(f"YOLO 모델 로드: {YOLO_MODEL_PATH}")
     model = YOLO(YOLO_MODEL_PATH)
 else:
-    print("⚠️ 기본 모델(yolov8n.pt) 로드. 인식률이 낮을 수 있습니다.")
+    print("기본 모델(yolov8n.pt) 로드. 인식률이 낮을 수 있습니다.")
     model = YOLO('yolov8n.pt')
 
 LOCATIONS = [
@@ -476,7 +482,7 @@ def process_and_ocr(crop_img, start_time, timeout=3.0, is_full_image=False):
     
     return []
 
-def detect_best_plate(img_path):
+def _detect_best_plate_impl(img_path):
     start_time = time.time()
     timeout = 3.0
     log_lines = []
@@ -512,7 +518,7 @@ def detect_best_plate(img_path):
     plate_found = False
     for item in candidates_boxes:
         if time.time() - start_time > timeout:
-            log_lines.append(" ⚠️ [Timeout] 시간 초과")
+            log_lines.append("[Timeout] 시간 초과")
             break
 
         is_full = item['is_full']
@@ -521,18 +527,67 @@ def detect_best_plate(img_path):
         
         if found_plates:
             best_plate = found_plates[0]
-            log_lines.append(f" ✅ [인식 성공] {best_plate} - {label}")
+            log_lines.append(f"[인식 성공] {best_plate} - {label}")
             plate_found = True
             break 
 
     if not plate_found:
-        log_lines.append(" ❌ 최종 인식 실패")
+        log_lines.append("최종 인식 실패")
 
     del original_img
     return best_plate, log_lines
 
+class InferenceJob:
+    def __init__(self, img_path):
+        self.img_path = img_path
+        self.done = threading.Event()
+        self.result = None
+        self.error = None
+
+
+class InferenceWorker:
+    """Serializes all YOLO and OneOCR calls onto one worker thread."""
+
+    def __init__(self):
+        self._jobs = queue.Queue()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="ocr-inference-worker",
+            daemon=True
+        )
+        self._thread.start()
+
+    def submit(self, img_path):
+        if threading.current_thread() is self._thread:
+            return _detect_best_plate_impl(img_path)
+
+        job = InferenceJob(img_path)
+        self._jobs.put(job)
+        job.done.wait()
+
+        if job.error:
+            raise job.error
+        return job.result
+
+    def _run(self):
+        while True:
+            job = self._jobs.get()
+            try:
+                job.result = _detect_best_plate_impl(job.img_path)
+            except Exception as e:
+                job.error = e
+            finally:
+                job.done.set()
+                self._jobs.task_done()
+
+
+inference_worker = InferenceWorker()
+
+def detect_best_plate(img_path):
+    return inference_worker.submit(img_path)
+
 def background_processing(task_id, file_paths, location, reason, ampm):
-    print(f"🚀 [Task {task_id}] 작업 시작 (총 {len(file_paths)}장)")
+    print(f"[Task {task_id}] 작업 시작 (총 {len(file_paths)}장)")
     results_list = []
     total = len(file_paths)
 
@@ -541,7 +596,7 @@ def background_processing(task_id, file_paths, location, reason, ampm):
             filename = os.path.basename(path)
             tasks[task_id]['current'] = idx + 1
             tasks[task_id]['last_processed'] = filename
-            print(f"  ↳ Processing [{idx+1}/{total}]: {filename} ... ", end='', flush=True)
+            print(f"Processing [{idx+1}/{total}]: {filename} ... ", end='', flush=True)
 
             try:
                 plate, _ = detect_best_plate(path)
@@ -558,10 +613,10 @@ def background_processing(task_id, file_paths, location, reason, ampm):
         tasks[task_id]['results'] = results_list
         tasks[task_id]['report_text'] = f"{location} {reason} ({ampm}) - 총 {total}건"
         tasks[task_id]['status'] = 'done'
-        print(f"🏁 [Task {task_id}] 작업 완료.\n")
+        print(f"[Task {task_id}] 작업 완료.\n")
 
     except Exception as e:
-        print(f"🔥 [Task {task_id}] 오류: {e}")
+        print(f"[Task {task_id}] 오류: {e}")
         tasks[task_id]['status'] = 'error'
 
 # ==========================================
@@ -579,7 +634,7 @@ def login():
             session['logged_in'] = True
             return redirect(url_for('index'))
         else:
-            return render_template('login.html', error="❌ 비밀번호가 올바르지 않습니다.")
+            return render_template('login.html', error="비밀번호가 올바르지 않습니다.")
     return render_template('login.html')
 
 @app.route('/logout')
@@ -645,11 +700,11 @@ def check_status(task_id):
 @app.route('/result_view/<task_id>')
 @login_required
 def result_view(task_id):
-    if task_id not in tasks: return f"<h3>❌ 작업을 찾을 수 없습니다.</h3><a href='/'>메인으로</a>", 404
+    if task_id not in tasks: return f"<h3>작업을 찾을 수 없습니다.</h3><a href='/'>메인으로</a>", 404
     task = tasks[task_id]
-    if task['status'] == 'error': return f"<h3>🔥 오류 발생</h3><a href='/'>메인으로</a>", 500
+    if task['status'] == 'error': return f"<h3>오류 발생</h3><a href='/'>메인으로</a>", 500
     if task['status'] == 'processing':
-        return f"<h3>⏳ 분석 중... ({task['current']} / {task['total']})</h3><script>setTimeout(function(){{ location.reload(); }}, 2000);</script>", 200
+        return f"<h3>분석 중... ({task['current']} / {task['total']})</h3><script>setTimeout(function(){{ location.reload(); }}, 2000);</script>", 200
     return render_template('result.html', results=task['results'], report_text=task['report_text'], location=task['location'], reason=task['reason'])
 
 @app.route('/save', methods=['POST'])
@@ -709,23 +764,23 @@ def save():
 
             # 2. [중요] 백업 파일 우선 저장
             final_df.to_excel(backup_path, index=False)
-            messages.append(f"✅ <b>데이터 안전 저장됨 (Backup):</b> {today_str}/{backup_filename}")
+            messages.append(f"<b>데이터 안전 저장됨 (Backup):</b> {today_str}/{backup_filename}")
 
             # 3. 메인 파일 덮어쓰기 시도
             try:
                 shutil.copy2(backup_path, root_path)
-                messages.append(f"✅ <b>메인 파일 업데이트됨:</b> {root_filename}")
+                messages.append(f"<b>메인 파일 업데이트됨:</b> {root_filename}")
                 main_status = "성공"
             except PermissionError:
                 messages.append(
-                    f"<br>⚠️ <b>[주의] 메인 엑셀 파일이 열려있어 업데이트하지 못했습니다.</b><br>"
+                    f"<br><b>[주의] 메인 엑셀 파일이 열려있어 업데이트하지 못했습니다.</b><br>"
                     f"하지만 데이터는 <b>backup 폴더</b>에 안전하게 저장되었습니다.<br>"
                     f"최신 내용을 보려면 엑셀을 닫고 다시 저장하거나 backup 폴더를 확인하세요."
                 )
                 main_status = "실패"
 
         except Exception as e:
-            return f"<h3>❌ 치명적 저장 오류</h3><p>{str(e)}</p>", 500
+            return f"<h3>치명적 저장 오류</h3><p>{str(e)}</p>", 500
     
     backup_relative_path = os.path.join('backup', today_str, backup_filename)
 
@@ -779,13 +834,13 @@ def report_page():
         </style>
     </head>
     <body>
-        <h2>📊 주차 단속 엑셀 파일 목록</h2>
+        <h2>주차 단속 엑셀 파일 목록</h2>
         <ul>
             {file_list if files else "<li>저장된 내역이 없습니다.</li>"}
         </ul>
         <hr>
         <p>※ 파일이 열려있어 저장이 안 된 경우, <b>backup</b> 폴더를 확인하세요.</p>
-        <a href="/" class="btn">🏠 홈으로 돌아가기</a>
+        <a href="/" class="btn">홈으로 돌아가기</a>
     </body>
     </html>
     """
@@ -803,23 +858,73 @@ def send_discord_webhook(tunnel_url):
     data = {
         "username": "OCR Server Bot",
         "embeds": [{
-            "title": "🚀 단속 서버가 시작되었습니다.",
+            "title": "단속 서버가 시작되었습니다.",
             "description": "외부에서 접속 가능한 링크가 생성되었습니다.",
             "color": 65280, # Green color
             "fields": [
-                {"name": "🌍 외부 접속 URL", "value": tunnel_url, "inline": False},
-                {"name": "🏠 로컬 URL", "value": f"http://127.0.0.1:5000", "inline": False},
-                {"name": "🔒 보안 모드", "value": "활성화" if SYSTEM_PASSWORD else "비활성화 (공개)", "inline": True}
+                {"name": "외부 접속 URL", "value": tunnel_url, "inline": False},
+                {"name": "로컬 URL", "value": f"http://127.0.0.1:5000", "inline": False},
+                {"name": "보안 모드", "value": "활성화" if SYSTEM_PASSWORD else "비활성화 (공개)", "inline": True}
             ],
             "footer": {"text": f"Started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"}
         }]
     }
 
     try:
-        requests.post(webhook_url, json=data)
-        print("📨 [Discord] 웹훅 전송 완료")
+        requests.post(webhook_url, json=data, timeout=10)
+        print("[Discord] 웹훅 전송 완료")
     except Exception as e:
-        print(f"⚠️ [Discord] 웹훅 전송 실패: {e}")
+        print(f"[Discord] 웹훅 전송 실패: {e}")
+
+def _start_cloudflared(cmd, creation_flags):
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding='utf-8',
+        errors='replace',
+        creationflags=creation_flags
+    )
+    output_queue = queue.Queue()
+
+    def read_output():
+        try:
+            for line in process.stdout:
+                output_queue.put(line)
+        except Exception:
+            pass
+
+    threading.Thread(target=read_output, daemon=True).start()
+    return process, output_queue
+
+def _wait_for_cloudflared_output(process, output_queue, timeout, matcher):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            return None
+
+        remaining = deadline - time.monotonic()
+        try:
+            line = output_queue.get(timeout=max(0.1, min(0.5, remaining)))
+        except queue.Empty:
+            continue
+
+        matched = matcher(line)
+        if matched:
+            return matched
+    return None
+
+def _terminate_process(process):
+    if process and process.poll() is None:
+        try:
+            process.terminate()
+            process.wait(timeout=3)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
 
 def init_cloudflare_tunnel(port):
     """
@@ -832,13 +937,14 @@ def init_cloudflare_tunnel(port):
 
     # cloudflared 다운로드
     if not os.path.exists(cf_filename):
-        print(f"⬇️ Cloudflare 다운로드 중...")
+        print("Cloudflare 다운로드 중...")
         try:
-            with requests.get(cf_url, stream=True) as r:
+            with requests.get(cf_url, stream=True, timeout=(5, 120)) as r:
                 r.raise_for_status()
                 with open(cf_filename, 'wb') as f:
                     shutil.copyfileobj(r.raw, f)
-        except Exception:
+        except Exception as e:
+            print(f"Cloudflare 다운로드 실패: {e}")
             return None
 
     # 기존 프로세스 종료
@@ -852,48 +958,52 @@ def init_cloudflare_tunnel(port):
     tunnel_domain = get_cloudflare_tunnel_domain()
     
     if tunnel_token:
-        print("🔗 고정 도메인 터널 시작 중...")
+        print("고정 도메인 터널 시작 중...")
         cmd = [cf_filename, "tunnel", "run", "--token", tunnel_token]
-        process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, encoding='utf-8', errors='replace',
-            creationflags=creation_flags
-        )
-        
-        # 터널 시작 대기 (연결 확인)
-        start_time = time.time()
-        while time.time() - start_time < 10:
-            line = process.stderr.readline()
-            if not line:
-                time.sleep(0.5)
-                continue
-            # 연결 성공 메시지 확인
+
+        def fixed_tunnel_matcher(line):
             if "Registered tunnel connection" in line or "connIndex" in line:
                 if tunnel_domain:
                     return f"https://{tunnel_domain}"
-                else:
-                    return "[고정 도메인 - 설정에서 CLOUDFLARE_TUNNEL_DOMAIN 확인]"
-        
-        print("⚠️ 고정 터널 연결 시간 초과, Quick Tunnel로 전환...")
+                return "[고정 도메인 - 설정에서 CLOUDFLARE_TUNNEL_DOMAIN 확인]"
+            return None
+
+        try:
+            process, output_queue = _start_cloudflared(cmd, creation_flags)
+        except Exception as e:
+            print(f"고정 터널 실행 실패: {e}")
+            process = None
+            output_queue = None
+
+        if not process:
+            print("고정 터널 시작 실패, Quick Tunnel로 전환...")
+        else:
+            fixed_url = _wait_for_cloudflared_output(process, output_queue, 10, fixed_tunnel_matcher)
+            if fixed_url:
+                return fixed_url
+            _terminate_process(process)
+            print("고정 터널 연결 시간 초과, Quick Tunnel로 전환...")
 
     # Quick Tunnel (임시 URL)
-    print("🌐 Quick Tunnel 시작 중...")
+    print("Quick Tunnel 시작 중...")
     cmd = [cf_filename, "tunnel", "--url", f"http://localhost:{port}"]
-    process = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-        text=True, encoding='utf-8', errors='replace',
-        creationflags=creation_flags
-    )
 
-    tunnel_url = None
-    start_time = time.time()
-    while time.time() - start_time < 15:
-        line = process.stderr.readline()
-        if not line: break
+    def quick_tunnel_matcher(line):
         match = re.search(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', line)
         if match:
-            tunnel_url = match.group(0)
-            break
+            return match.group(0)
+        return None
+
+    try:
+        process, output_queue = _start_cloudflared(cmd, creation_flags)
+    except Exception as e:
+        print(f"Quick Tunnel 실행 실패: {e}")
+        return None
+
+    tunnel_url = _wait_for_cloudflared_output(process, output_queue, 15, quick_tunnel_matcher)
+    if not tunnel_url:
+        _terminate_process(process)
+        print("Quick Tunnel 연결 시간 초과")
     return tunnel_url
 
 if __name__ == '__main__':
@@ -915,14 +1025,14 @@ if __name__ == '__main__':
         try:
             from gui import main as gui_main
             mode_name = "하이브리드" if args.hybrid else "GUI"
-            print(f"🖥️ {mode_name} 모드로 시작합니다...")
+            print(f"{mode_name} 모드로 시작합니다...")
             gui_main(start_server=args.hybrid)  # 하이브리드면 서버도 시작
         except ImportError as e:
-            print(f"❌ GUI 모듈 로드 실패: {e}")
+            print(f"GUI 모듈 로드 실패: {e}")
             print("   --server 옵션으로 웹 서버 모드를 사용하세요.")
             sys.exit(1)
         except Exception as e:
-            print(f"❌ GUI 실행 실패: {e}")
+            print(f"GUI 실행 실패: {e}")
             sys.exit(1)
     else:
         # 서버 모드 실행
@@ -930,24 +1040,24 @@ if __name__ == '__main__':
         HOST_IP = '127.0.0.1' 
         
         print("=" * 60)
-        print(f"🚀 [서버 시작] 보안 모드 (v2.2 - GUI 지원)")
+        print("[서버 시작] 보안 모드 (v2.2 - GUI 지원)")
         if SYSTEM_PASSWORD:
-            print(f"🔑 외부 접속 비밀번호: {SYSTEM_PASSWORD}")
+            print(f"외부 접속 비밀번호: {SYSTEM_PASSWORD}")
         else:
-            print(f"🔓 비밀번호 미설정 (누구나 접속 가능)")
+            print("비밀번호 미설정 (누구나 접속 가능)")
             
-        print(f"📂 백업 폴더: {BACKUP_DIR}")
+        print(f"백업 폴더: {BACKUP_DIR}")
 
         public_url = init_cloudflare_tunnel(PORT)
         print("-" * 60)
         if public_url:
-            print(f"🌍 [외부 접속 주소] : {public_url}")
+            print(f"[외부 접속 주소] : {public_url}")
             send_discord_webhook(public_url)
         else:
-            print("❌ Cloudflare 터널 실패 (로컬 접속만 가능)")
+            print("Cloudflare 터널 실패 (로컬 접속만 가능)")
 
         print("-" * 60)
-        print(f"🏠 [로컬 접속 주소] : http://{HOST_IP}:{PORT}")
+        print(f"[로컬 접속 주소] : http://{HOST_IP}:{PORT}")
         print("   (로컬 접속 시 비밀번호 없이 자동 로그인됩니다)")
         print("=" * 60)
         print("   서버를 종료하려면 Ctrl+C를 누르세요.")
@@ -955,10 +1065,10 @@ if __name__ == '__main__':
 
         # 종료 시 정리 함수
         def cleanup():
-            print("\n🛑 서버 종료 중...")
+            print("\n서버 종료 중...")
             # Cloudflare 프로세스 종료
             os.system("taskkill /f /im cloudflared.exe >nul 2>&1")
-            print("✅ 정리 완료")
+            print("정리 완료")
         
         # 종료 핸들러 등록
         import atexit
@@ -985,5 +1095,5 @@ if __name__ == '__main__':
         except KeyboardInterrupt:
             cleanup()
         except Exception as e:
-            print(f"❌ 서버 오류: {e}")
+            print(f"서버 오류: {e}")
             cleanup()

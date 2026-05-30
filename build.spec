@@ -11,7 +11,7 @@ block_cipher = None
 base_dir = os.path.dirname(os.path.abspath(SPEC))
 
 a = Analysis(
-    ['ocr.py', 'gui.py', 'dll_extractor.py'],
+    ['ocr.py'],
     pathex=[base_dir],
     binaries=[
         ('dlls/oneocr.dll', 'dlls'),
@@ -24,6 +24,8 @@ a = Analysis(
         ('dlls/oneocr.onemodel', 'dlls'),
     ],
     hiddenimports=[
+        'gui',
+        'dll_extractor',
         'flask',
         'waitress',
         'pandas',

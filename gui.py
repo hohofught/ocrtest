@@ -20,12 +20,12 @@ from settings_manager import get_settings, init_settings
 # OCR 엔진 및 처리 함수 import (ocr.py에서)
 try:
     from ocr import (
-        detect_best_plate, global_ocr, model,
+        detect_best_plate,
         LOCATIONS, REASONS, BASE_DIR, BACKUP_DIR
     )
     OCR_AVAILABLE = True
 except ImportError as e:
-    print(f"⚠️ OCR 모듈 로드 실패: {e}")
+    print(f"OCR 모듈 로드 실패: {e}")
     OCR_AVAILABLE = False
 
 
@@ -34,7 +34,7 @@ class ParkingEnforcementGUI:
     
     def __init__(self, root, start_server=False):
         self.root = root
-        self.root.title("🚘 주차 단속 시스템 (로컬 모드)")
+        self.root.title("주차 단속 시스템 (로컬 모드)")
         self.root.geometry("900x700")
         self.root.minsize(800, 600)
         
@@ -52,6 +52,9 @@ class ParkingEnforcementGUI:
         
         # 서버 관련
         self.server_thread = None
+        self.http_server = None
+        self.server_lock = threading.Lock()
+        self.server_stop_event = None
         self.server_running = False
         self.server_url = None
         
@@ -69,7 +72,7 @@ class ParkingEnforcementGUI:
             self.root.after(500, self.toggle_server)
         
         # 상태 표시
-        self.update_status("준비됨" if OCR_AVAILABLE else "⚠️ OCR 모듈 로드 실패")
+        self.update_status("준비됨" if OCR_AVAILABLE else "OCR 모듈 로드 실패")
     
     def apply_loaded_settings(self):
         """저장된 설정을 UI에 적용"""
@@ -149,18 +152,18 @@ class ParkingEnforcementGUI:
         toolbar = ttk.Frame(self.root)
         toolbar.pack(fill=tk.X, padx=10, pady=10)
         
-        ttk.Button(toolbar, text="📁 폴더 선택", command=self.select_folder).pack(side=tk.LEFT, padx=5)
-        ttk.Button(toolbar, text="📄 파일 선택", command=self.select_files).pack(side=tk.LEFT, padx=5)
-        ttk.Button(toolbar, text="▶️ 분석 시작", command=self.start_processing, style="Accent.TButton").pack(side=tk.LEFT, padx=5)
-        ttk.Button(toolbar, text="⏹️ 중지", command=self.stop_processing).pack(side=tk.LEFT, padx=5)
-        ttk.Button(toolbar, text="⚙️ 설정", command=self.open_settings_dialog).pack(side=tk.LEFT, padx=5)
+        ttk.Button(toolbar, text="폴더 선택", command=self.select_folder).pack(side=tk.LEFT, padx=5)
+        ttk.Button(toolbar, text="파일 선택", command=self.select_files).pack(side=tk.LEFT, padx=5)
+        ttk.Button(toolbar, text="분석 시작", command=self.start_processing, style="Accent.TButton").pack(side=tk.LEFT, padx=5)
+        ttk.Button(toolbar, text="중지", command=self.stop_processing).pack(side=tk.LEFT, padx=5)
+        ttk.Button(toolbar, text="설정", command=self.open_settings_dialog).pack(side=tk.LEFT, padx=5)
         
         # 서버 토글 버튼
-        self.server_btn = ttk.Button(toolbar, text="🌐 서버 시작", command=self.toggle_server)
+        self.server_btn = ttk.Button(toolbar, text="서버 시작", command=self.toggle_server)
         self.server_btn.pack(side=tk.RIGHT, padx=5)
         
         # 주소 복사 버튼
-        self.copy_url_btn = ttk.Button(toolbar, text="📋 주소 복사", command=self.copy_server_url, state=tk.DISABLED)
+        self.copy_url_btn = ttk.Button(toolbar, text="주소 복사", command=self.copy_server_url, state=tk.DISABLED)
         self.copy_url_btn.pack(side=tk.RIGHT, padx=5)
         
         self.server_status_label = ttk.Label(toolbar, text="")
@@ -202,17 +205,17 @@ class ParkingEnforcementGUI:
         # 이미지 네비게이션
         nav_frame = ttk.Frame(left_frame)
         nav_frame.pack(fill=tk.X, pady=5)
-        ttk.Button(nav_frame, text="◀ 이전", command=self.prev_image).pack(side=tk.LEFT, padx=5)
+        ttk.Button(nav_frame, text="이전", command=self.prev_image).pack(side=tk.LEFT, padx=5)
         self.nav_label = ttk.Label(nav_frame, text="0 / 0")
         self.nav_label.pack(side=tk.LEFT, expand=True)
-        ttk.Button(nav_frame, text="다음 ▶", command=self.next_image).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(nav_frame, text="다음", command=self.next_image).pack(side=tk.RIGHT, padx=5)
         
         # 오른쪽: 결과 목록
         right_frame = ttk.Frame(main_frame, width=350)
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, padx=5)
         right_frame.pack_propagate(False)
         
-        ttk.Label(right_frame, text="📋 인식 결과", font=("맑은 고딕", 12, "bold")).pack(pady=5)
+        ttk.Label(right_frame, text="인식 결과", font=("맑은 고딕", 12, "bold")).pack(pady=5)
         
         # 결과 리스트박스
         list_frame = ttk.Frame(right_frame)
@@ -252,9 +255,9 @@ class ParkingEnforcementGUI:
         self.status_label = ttk.Label(status_frame, text="준비됨")
         self.status_label.pack(side=tk.LEFT)
         
-        ttk.Button(status_frame, text="💾 Excel 저장", command=self.save_to_excel, 
+        ttk.Button(status_frame, text="Excel 저장", command=self.save_to_excel,
                    style="Accent.TButton").pack(side=tk.RIGHT, padx=5)
-        ttk.Button(status_frame, text="🔄 초기화", command=self.reset_all).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(status_frame, text="초기화", command=self.reset_all).pack(side=tk.RIGHT, padx=5)
     
     def select_folder(self):
         """폴더 선택"""
@@ -338,7 +341,7 @@ class ParkingEnforcementGUI:
         self.result_listbox.delete(0, tk.END)
         for i, result in enumerate(self.results):
             plate = result.get("plate", "")
-            status = "✅" if plate else "⏳"
+            status = "완료" if plate else "대기"
             self.result_listbox.insert(tk.END, f"{status} {result['filename']}: {plate}")
     
     def on_result_select(self, event):
@@ -470,15 +473,15 @@ class ParkingEnforcementGUI:
             self.root.clipboard_clear()
             self.root.clipboard_append(self.server_url)
             self.root.update()  # 클립보드 업데이트 강제
-            self.update_status(f"✅ 주소 복사됨: {self.server_url}")
+            self.update_status(f"주소 복사됨: {self.server_url}")
             messagebox.showinfo("복사 완료", f"서버 주소가 복사되었습니다:\n{self.server_url}")
         else:
-            self.update_status("⚠️ 서버가 실행되지 않았습니다")
+            self.update_status("서버가 실행되지 않았습니다")
     
     def open_settings_dialog(self):
         """설정 다이얼로그 열기"""
         dialog = tk.Toplevel(self.root)
-        dialog.title("⚙️ 설정")
+        dialog.title("설정")
         dialog.geometry("550x500")
         dialog.configure(bg=self.bg_color)
         dialog.transient(self.root)
@@ -501,7 +504,7 @@ class ParkingEnforcementGUI:
         entries = {}
         
         # === 링크 고정 설정 섹션 ===
-        section1 = ttk.LabelFrame(scrollable_frame, text="🔗 링크 고정 설정 (Cloudflare Tunnel)", padding=10)
+        section1 = ttk.LabelFrame(scrollable_frame, text="링크 고정 설정 (Cloudflare Tunnel)", padding=10)
         section1.pack(fill=tk.X, padx=10, pady=10)
         
         ttk.Label(section1, text="Tunnel Token:").grid(row=0, column=0, sticky="w", pady=5)
@@ -514,11 +517,11 @@ class ParkingEnforcementGUI:
         entries["cloudflare_tunnel_domain"].grid(row=1, column=1, padx=5, pady=5)
         entries["cloudflare_tunnel_domain"].insert(0, self.settings.get("cloudflare_tunnel_domain", ""))
         
-        ttk.Label(section1, text="💡 토큰이 설정되면 고정 도메인으로 접속합니다.\n   비워두면 임시 URL(trycloudflare.com)을 사용합니다.",
+        ttk.Label(section1, text="토큰이 설정되면 고정 도메인으로 접속합니다.\n비워두면 임시 URL(trycloudflare.com)을 사용합니다.",
                  foreground="#888888").grid(row=2, column=0, columnspan=2, sticky="w", pady=5)
         
         # === Discord 알림 설정 ===
-        section2 = ttk.LabelFrame(scrollable_frame, text="📢 Discord 알림", padding=10)
+        section2 = ttk.LabelFrame(scrollable_frame, text="Discord 알림", padding=10)
         section2.pack(fill=tk.X, padx=10, pady=10)
         
         ttk.Label(section2, text="Webhook URL:").grid(row=0, column=0, sticky="w", pady=5)
@@ -526,11 +529,11 @@ class ParkingEnforcementGUI:
         entries["discord_webhook_url"].grid(row=0, column=1, padx=5, pady=5)
         entries["discord_webhook_url"].insert(0, self.settings.get("discord_webhook_url", ""))
         
-        ttk.Label(section2, text="💡 서버 시작 시 Discord로 알림을 보냅니다.",
+        ttk.Label(section2, text="서버 시작 시 Discord로 알림을 보냅니다.",
                  foreground="#888888").grid(row=1, column=0, columnspan=2, sticky="w", pady=5)
         
         # === 폴더 경로 설정 ===
-        section3 = ttk.LabelFrame(scrollable_frame, text="📁 폴더 경로 설정", padding=10)
+        section3 = ttk.LabelFrame(scrollable_frame, text="폴더 경로 설정", padding=10)
         section3.pack(fill=tk.X, padx=10, pady=10)
         
         def browse_folder(key, entry_widget):
@@ -563,7 +566,7 @@ class ParkingEnforcementGUI:
         ttk.Button(section3, text="찾아보기",
                   command=lambda: browse_folder("excel_save_folder", entries["excel_save_folder"])).grid(row=2, column=2, padx=5)
         
-        ttk.Label(section3, text="💡 비워두면 기본 경로(프로그램 폴더)를 사용합니다.",
+        ttk.Label(section3, text="비워두면 기본 경로(프로그램 폴더)를 사용합니다.",
                  foreground="#888888").grid(row=3, column=0, columnspan=3, sticky="w", pady=5)
         
         # === 버튼 영역 ===
@@ -588,10 +591,10 @@ class ParkingEnforcementGUI:
                 dialog.destroy()
                 self.open_settings_dialog()  # 다이얼로그 다시 열기
         
-        ttk.Button(button_frame, text="💾 저장", command=save_settings, 
+        ttk.Button(button_frame, text="저장", command=save_settings,
                   style="Accent.TButton").pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="🔄 초기화", command=reset_settings).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="❌ 취소", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="초기화", command=reset_settings).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="취소", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
         
         # 스크롤 레이아웃
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -609,6 +612,9 @@ class ParkingEnforcementGUI:
     def stop_background_server(self):
         """백그라운드 웹 서버 중지"""
         import subprocess
+
+        if self.server_stop_event:
+            self.server_stop_event.set()
         
         # Cloudflare 프로세스 종료
         try:
@@ -619,18 +625,55 @@ class ParkingEnforcementGUI:
             )
         except:
             pass
+
+        with self.server_lock:
+            server = self.http_server
+            self.http_server = None
+
+        if server:
+            self._close_waitress_server(server)
+
+        if self.server_thread and self.server_thread.is_alive() and self.server_thread is not threading.current_thread():
+            self.server_thread.join(timeout=2)
         
         self.server_running = False
-        self.server_btn.configure(text="🌐 서버 시작")
+        self.server_thread = None
+        self.server_btn.configure(text="서버 시작")
         self.copy_url_btn.configure(state=tk.DISABLED)
         self.server_status_label.configure(text="")
         self.server_url = None
         self.update_status("서버 중지됨 (다시 시작 버튼 클릭)")
 
+    def _close_waitress_server(self, server):
+        """Waitress 서버와 작업 스레드를 실제로 종료"""
+        try:
+            for channel in list(getattr(server, "active_channels", {}).values()):
+                try:
+                    channel.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            server.close()
+        except Exception:
+            pass
+
+        dispatcher = getattr(server, "task_dispatcher", None)
+        if dispatcher:
+            try:
+                dispatcher.shutdown(timeout=2)
+            except Exception:
+                pass
+
     def start_background_server(self):
         """백그라운드 웹 서버 시작"""
         import socket
         import subprocess
+
+        if self.server_running:
+            return
         
         # 기존 cloudflared 프로세스 정리
         try:
@@ -647,23 +690,39 @@ class ParkingEnforcementGUI:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             sock.bind(('127.0.0.1', port))
-            sock.close()
         except OSError:
             messagebox.showerror("오류", f"포트 {port}가 이미 사용 중입니다.\n다른 서버가 실행 중인지 확인하세요.")
             return
+        finally:
+            sock.close()
+
+        stop_event = threading.Event()
+        self.server_stop_event = stop_event
         
         def run_server():
+            http_server = None
             try:
                 from ocr import app, init_cloudflare_tunnel, send_discord_webhook
-                from waitress import serve
+                from waitress import create_server
+
+                http_server = create_server(
+                    app, host='0.0.0.0', port=port,
+                    threads=10, channel_timeout=3000
+                )
+
+                with self.server_lock:
+                    self.http_server = http_server
                 
                 # Cloudflare Tunnel 시도
                 public_url = init_cloudflare_tunnel(port)
+
+                if stop_event.is_set():
+                    return
                 
                 if public_url:
                     self.server_url = public_url
                     self.root.after(0, lambda: self.server_status_label.configure(
-                        text=f"🌐 {public_url[:30]}..."))
+                        text=f"{public_url[:30]}..."))
                     # Discord 알림
                     try:
                         send_discord_webhook(public_url)
@@ -672,17 +731,29 @@ class ParkingEnforcementGUI:
                 else:
                     self.server_url = f"http://127.0.0.1:{port}"
                     self.root.after(0, lambda: self.server_status_label.configure(
-                        text=f"🏠 로컬만"))
-                
-                serve(app, host='0.0.0.0', port=port, threads=10, channel_timeout=3000)
+                        text="로컬만"))
+
+                if stop_event.is_set():
+                    return
+
+                http_server.run()
             except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("서버 오류", str(e)))
-                self.root.after(0, lambda: self.stop_background_server())
+                if not stop_event.is_set():
+                    self.root.after(0, lambda: messagebox.showerror("서버 오류", str(e)))
+                    self.root.after(0, lambda: self.stop_background_server())
+            finally:
+                if http_server:
+                    self._close_waitress_server(http_server)
+                with self.server_lock:
+                    if self.http_server is http_server:
+                        self.http_server = None
+                if self.server_stop_event is stop_event:
+                    self.server_stop_event = None
         
         self.server_thread = threading.Thread(target=run_server, daemon=True)
         self.server_thread.start()
         self.server_running = True
-        self.server_btn.configure(text="🔴 서버 중지")
+        self.server_btn.configure(text="서버 중지")
         self.copy_url_btn.configure(state=tk.NORMAL)
         self.server_url = f"http://127.0.0.1:{port}"
         self.update_status("웹 서버 시작 중...")
@@ -720,7 +791,7 @@ def acquire_lock():
             _lock_file_handle = None
         return False
     except Exception as e:
-        print(f"⚠️ 락 획득 중 오류: {e}")
+        print(f"락 획득 중 오류: {e}")
         return False
 
 def release_lock():
@@ -756,7 +827,7 @@ def bring_existing_window_to_front():
         user32 = ctypes.windll.user32
         
         # 창 제목으로 찾기
-        hwnd = user32.FindWindowW(None, "🚘 주차 단속 시스템 (로컬 모드)")
+        hwnd = user32.FindWindowW(None, "주차 단속 시스템 (로컬 모드)")
         if hwnd:
             # 창 복원 (최소화된 경우)
             SW_RESTORE = 9
@@ -774,14 +845,14 @@ def main(start_server=False):
     try:
         from PIL import Image, ImageTk
     except ImportError:
-        print("❌ Pillow 라이브러리가 필요합니다: pip install Pillow")
+        print("Pillow 라이브러리가 필요합니다: pip install Pillow")
         sys.exit(1)
     
     # 중복 실행 방지
     if not acquire_lock():
         # 기존 창을 앞으로 가져오기 시도
         if bring_existing_window_to_front():
-            print("ℹ️ 기존 프로그램 창을 활성화했습니다.")
+            print("기존 프로그램 창을 활성화했습니다.")
         else:
             # 창을 찾지 못한 경우 메시지 표시
             # Tk 인스턴스 생성하여 메시지박스 표시
@@ -799,7 +870,7 @@ def main(start_server=False):
         app = ParkingEnforcementGUI(root, start_server=start_server)
         root.mainloop()
     except Exception as e:
-        print(f"❌ 프로그램 오류: {e}")
+        print(f"프로그램 오류: {e}")
     finally:
         release_lock()
 

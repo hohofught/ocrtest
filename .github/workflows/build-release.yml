@@ -32,7 +32,7 @@ jobs:
       # DLL 자동 다운로드 (MORT 프로젝트에서 제공)
       - name: Download OCR DLLs
         run: |
-          Write-Host "📦 OCR DLL 다운로드 중..."
+          Write-Host "OCR DLL 다운로드 중..."
           New-Item -ItemType Directory -Force -Path "dlls"
           
           # MORT 프로젝트에서 DLL 다운로드
@@ -44,7 +44,7 @@ jobs:
           try {
               Invoke-WebRequest -Uri $dllUrl -OutFile $zipPath -TimeoutSec 120
           } catch {
-              Write-Host "❌ DLL 다운로드 실패: $_"
+              Write-Host "DLL 다운로드 실패: $_"
               throw "Failed to download OCR DLLs"
           }
           
@@ -53,7 +53,7 @@ jobs:
           Expand-Archive -Path $zipPath -DestinationPath "dlls" -Force
           Remove-Item $zipPath
           
-          Write-Host "✅ DLL 다운로드 완료"
+          Write-Host "DLL 다운로드 완료"
           Get-ChildItem "dlls" | ForEach-Object { Write-Host "   - $($_.Name) ($([math]::Round($_.Length / 1MB, 2)) MB)" }
       
       - name: Verify required files
@@ -66,12 +66,12 @@ jobs:
           if (!(Test-Path "best.pt")) { $errors += "best.pt not found" }
           
           if ($errors.Count -gt 0) {
-              Write-Host "❌ 필수 파일 누락:"
+              Write-Host "필수 파일 누락:"
               $errors | ForEach-Object { Write-Host "   - $_" }
               throw "Required files missing"
           }
           
-          Write-Host "✅ 필수 파일 확인 완료:"
+          Write-Host "필수 파일 확인 완료:"
           Write-Host "   - oneocr.dll: $((Get-Item 'dlls/oneocr.dll').Length / 1MB) MB"
           Write-Host "   - oneocr.onemodel: $([math]::Round((Get-Item 'dlls/oneocr.onemodel').Length / 1MB, 2)) MB"
           Write-Host "   - onnxruntime.dll: $([math]::Round((Get-Item 'dlls/onnxruntime.dll').Length / 1MB, 2)) MB"
@@ -84,7 +84,7 @@ jobs:
         run: |
           if (!(Test-Path "dist/주차단속시스템.exe")) { throw "Build failed - EXE not found" }
           $size = (Get-Item "dist/주차단속시스템.exe").Length / 1MB
-          Write-Host "✅ Build successful! EXE size: $([math]::Round($size, 2)) MB"
+          Write-Host "Build successful! EXE size: $([math]::Round($size, 2)) MB"
       
       # 단일 EXE 파일로 업로드 (GitHub에서는 자동으로 zip 처리)
       - name: Upload artifact
@@ -105,7 +105,7 @@ jobs:
           draft: false
           prerelease: false
           body: |
-            ## 📦 주차 단속 시스템 릴리즈
+            ## 주차 단속 시스템 릴리즈
             
             ### 다운로드
             아래 `주차단속시스템.exe` 파일을 다운로드하여 실행하세요.

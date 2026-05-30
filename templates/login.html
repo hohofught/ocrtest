@@ -34,7 +34,7 @@
             text-align: center;
         }
 
-        .icon-area {
+        .login-label {
             font-size: 3rem;
             margin-bottom: 1rem;
         }
@@ -115,12 +115,12 @@
 <body>
 
     <div class="login-container">
-        <div class="icon-area">🔒</div>
+        <div class="login-label">로그인</div>
         <h2>관리자 로그인</h2>
 
         {% if error %}
         <div class="error-message">
-            <span>⚠️</span> {{ error }}
+            <span>알림</span> {{ error }}
         </div>
         {% endif %}
 

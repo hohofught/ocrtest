@@ -62,10 +62,10 @@ def get_install_location(app_name: str) -> Optional[str]:
         return path if path else None
         
     except subprocess.TimeoutExpired:
-        print(f"⚠️ [{app_name}] 경로 조회 시간 초과")
+        print(f"[{app_name}] 경로 조회 시간 초과")
         return None
     except Exception as e:
-        print(f"⚠️ [{app_name}] 경로 조회 실패: {e}")
+        print(f"[{app_name}] 경로 조회 실패: {e}")
         return None
 
 
@@ -77,11 +77,11 @@ def find_dll_source() -> Optional[Tuple[Path, str]]:
         (DLL 경로, 앱 이름) 튜플 또는 None
     """
     for app_name, subfolder in UWP_APPS:
-        print(f"🔍 [{app_name}] 검색 중...")
+        print(f"[{app_name}] 검색 중...")
         
         install_path = get_install_location(app_name)
         if not install_path:
-            print(f"   ❌ 설치되지 않음")
+            print("   설치되지 않음")
             continue
         
         # 하위 폴더가 있는 경우 (Snipping Tool)
@@ -93,10 +93,10 @@ def find_dll_source() -> Optional[Tuple[Path, str]]:
         # oneocr.dll 존재 확인
         dll_file = dll_dir / 'oneocr.dll'
         if dll_file.exists():
-            print(f"   ✅ DLL 발견: {dll_dir}")
+            print(f"   DLL 발견: {dll_dir}")
             return dll_dir, app_name
         else:
-            print(f"   ❌ {dll_dir}에 oneocr.dll 없음")
+            print(f"   {dll_dir}에 oneocr.dll 없음")
     
     return None
 
@@ -130,16 +130,16 @@ def copy_dll_files(source_dir: Path, dest_dir: Path) -> bool:
             # 이미 존재하는 경우 덮어쓰기
             shutil.copy2(src_file, dst_file)
             copied_files.append(filename)
-            print(f"   📄 복사 완료: {filename}")
+            print(f"   복사 완료: {filename}")
         except PermissionError:
-            print(f"   ⚠️ 권한 오류: {filename} (관리자 권한 필요)")
+            print(f"   권한 오류: {filename} (관리자 권한 필요)")
             return False
         except Exception as e:
-            print(f"   ❌ 복사 실패: {filename} - {e}")
+            print(f"   복사 실패: {filename} - {e}")
             return False
     
     if missing_files:
-        print(f"   ⚠️ 찾을 수 없는 파일: {', '.join(missing_files)}")
+        print(f"   찾을 수 없는 파일: {', '.join(missing_files)}")
         return False
     
     return len(copied_files) == len(REQUIRED_FILES)
@@ -177,7 +177,7 @@ def extract_oneocr_dlls(dest_dir: Optional[str] = None, force: bool = False) -> 
         추출 성공 여부
     """
     print("\n" + "="*50)
-    print("🔧 OneOCR DLL 자동 추출 시작")
+    print("OneOCR DLL 자동 추출 시작")
     print("="*50)
     
     # 대상 폴더 설정
@@ -187,37 +187,37 @@ def extract_oneocr_dlls(dest_dir: Optional[str] = None, force: bool = False) -> 
     else:
         dest_dir = Path(dest_dir)
     
-    print(f"📁 대상 폴더: {dest_dir}")
+    print(f"대상 폴더: {dest_dir}")
     
     # 이미 존재하는지 확인
     if not force and check_existing_dlls(dest_dir):
-        print("✅ DLL 파일이 이미 존재합니다. 추출을 건너뜁니다.")
+        print("DLL 파일이 이미 존재합니다. 추출을 건너뜁니다.")
         print("   (강제 재추출: force=True 옵션 사용)")
         return True
     
     # Windows 앱에서 DLL 소스 찾기
     result = find_dll_source()
     if result is None:
-        print("\n❌ DLL 추출 실패!")
+        print("\nDLL 추출 실패!")
         print("   Snipping Tool 또는 Windows Photos 앱이 설치되어 있지 않습니다.")
-        print("\n💡 해결 방법:")
+        print("\n해결 방법:")
         print("   1. Microsoft Store에서 'Snipping Tool' 또는 'Windows Photos' 설치")
         print("   2. 또는 수동으로 DLL 파일을 dlls 폴더에 복사")
         print(f"   필요한 파일: {', '.join(REQUIRED_FILES)}")
         return False
     
     source_dir, app_name = result
-    print(f"\n📦 [{app_name}]에서 DLL 추출 중...")
+    print(f"\n[{app_name}]에서 DLL 추출 중...")
     
     # 파일 복사
     if copy_dll_files(source_dir, dest_dir):
         print("\n" + "="*50)
-        print("✅ DLL 추출 완료!")
+        print("DLL 추출 완료!")
         print(f"   저장 위치: {dest_dir}")
         print("="*50 + "\n")
         return True
     else:
-        print("\n❌ DLL 복사 중 오류가 발생했습니다.")
+        print("\nDLL 복사 중 오류가 발생했습니다.")
         print("   관리자 권한으로 실행하거나, 수동으로 파일을 복사하세요.")
         return False
 
@@ -267,11 +267,11 @@ if __name__ == '__main__':
     
     if args.info:
         info = get_dll_info()
-        print(f"\n📊 DLL 상태 정보")
+        print("\nDLL 상태 정보")
         print(f"   폴더: {info['dll_dir']}")
         print(f"   파일:")
         for name, data in info['files'].items():
-            status = "✅" if data['exists'] else "❌"
+            status = "있음" if data['exists'] else "없음"
             size = f"({data['size']:,} bytes)" if data['exists'] else ""
             print(f"     {status} {name} {size}")
         sys.exit(0)
