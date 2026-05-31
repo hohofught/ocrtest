@@ -35,6 +35,7 @@ datas = [
 hiddenimports = [
     'gui',
     'dll_extractor',
+    'records_store',
     'PIL.ImageTk',
     'tkinter',
     'tkinter.ttk',

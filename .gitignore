@@ -27,6 +27,11 @@ backup/
 # 생성된 엑셀 파일
 *.xlsx
 
+# Local SQLite history
+*.sqlite
+*.sqlite3
+*.db
+
 # Cloudflare
 cloudflared.exe
 

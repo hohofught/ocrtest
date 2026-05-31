@@ -16,12 +16,13 @@ import atexit
 
 # 설정 관리자 import
 from settings_manager import get_settings, init_settings
+from records_store import add_records, fetch_daily_counts, fetch_recent_records, fetch_record_count
 
 # OCR 엔진 및 처리 함수 import (ocr.py에서)
 try:
     from ocr import (
         detect_best_plate,
-        LOCATIONS, REASONS, BASE_DIR, BACKUP_DIR
+        LOCATIONS, REASONS, BASE_DIR, BACKUP_DIR, DB_PATH
     )
     OCR_AVAILABLE = True
 except ImportError as e:
@@ -156,6 +157,7 @@ class ParkingEnforcementGUI:
         ttk.Button(toolbar, text="파일 선택", command=self.select_files).pack(side=tk.LEFT, padx=5)
         ttk.Button(toolbar, text="분석 시작", command=self.start_processing, style="Accent.TButton").pack(side=tk.LEFT, padx=5)
         ttk.Button(toolbar, text="중지", command=self.stop_processing).pack(side=tk.LEFT, padx=5)
+        ttk.Button(toolbar, text="기록 보기", command=self.open_report_page).pack(side=tk.LEFT, padx=5)
         ttk.Button(toolbar, text="설정", command=self.open_settings_dialog).pack(side=tk.LEFT, padx=5)
         
         # 서버 토글 버튼
@@ -424,13 +426,25 @@ class ParkingEnforcementGUI:
         
         # DataFrame 생성
         entries = []
+        db_records = []
+        today_value = datetime.now().strftime('%Y-%m-%d')
         for r in valid_results:
             entries.append({
-                "날짜": datetime.now().strftime('%Y-%m-%d'),
+                "날짜": today_value,
                 "시간대": self.ampm_var.get(),
                 "단속위치": self.location_var.get(),
                 "사유": self.reason_var.get(),
                 "차량번호": r["plate"]
+            })
+            db_records.append({
+                "date": today_value,
+                "time_period": self.ampm_var.get(),
+                "location": self.location_var.get(),
+                "reason": self.reason_var.get(),
+                "plate_number": r["plate"],
+                "source_filename": r.get("filename", ""),
+                "image_path": r.get("path", ""),
+                "mode": "gui",
             })
         
         df = pd.DataFrame(entries)
@@ -446,7 +460,15 @@ class ParkingEnforcementGUI:
         if filepath:
             try:
                 df.to_excel(filepath, index=False)
-                messagebox.showinfo("성공", f"저장 완료: {filepath}\n총 {len(entries)}건")
+                for record in db_records:
+                    record["excel_file"] = filepath
+                try:
+                    add_records(DB_PATH, db_records)
+                    history_message = "\nSQLite 기록 저장 완료"
+                except Exception as history_error:
+                    history_message = f"\nSQLite 기록 저장 실패: {history_error}"
+
+                messagebox.showinfo("성공", f"저장 완료: {filepath}\n총 {len(entries)}건{history_message}")
                 self.update_status(f"Excel 저장 완료: {len(entries)}건")
             except Exception as e:
                 messagebox.showerror("오류", f"저장 실패: {e}")
@@ -477,6 +499,120 @@ class ParkingEnforcementGUI:
             messagebox.showinfo("복사 완료", f"서버 주소가 복사되었습니다:\n{self.server_url}")
         else:
             self.update_status("서버가 실행되지 않았습니다")
+
+    def get_configured_server_port(self):
+        try:
+            port = int(self.settings.get("server_port", "5000"))
+            if 1 <= port <= 65535:
+                return port
+        except (TypeError, ValueError):
+            pass
+        return 5000
+
+    def open_report_page(self):
+        """기록 보기"""
+        import webbrowser
+
+        if self.server_running and self.server_url:
+            webbrowser.open(self.server_url.rstrip("/") + "/report")
+            self.update_status("기록 페이지 열기")
+            return
+
+        self.open_history_window()
+
+    def open_history_window(self):
+        """서버 없이 SQLite 기록을 직접 표시"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("과거 기록")
+        dialog.geometry("900x560")
+        dialog.configure(bg=self.bg_color)
+        dialog.transient(self.root)
+
+        try:
+            total_count = fetch_record_count(DB_PATH)
+            daily_counts = fetch_daily_counts(DB_PATH, limit=14)
+            recent_records = fetch_recent_records(DB_PATH, limit=200)
+            load_error = ""
+        except Exception as e:
+            total_count = 0
+            daily_counts = []
+            recent_records = []
+            load_error = str(e)
+
+        top_frame = ttk.Frame(dialog)
+        top_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        ttk.Label(top_frame, text=f"누적 기록: {total_count}건").pack(side=tk.LEFT, padx=5)
+        if load_error:
+            ttk.Label(top_frame, text=f"로드 실패: {load_error}").pack(side=tk.LEFT, padx=5)
+
+        def copy_db_path():
+            dialog.clipboard_clear()
+            dialog.clipboard_append(DB_PATH)
+            dialog.update()
+            self.update_status("SQLite DB 경로 복사됨")
+
+        ttk.Button(top_frame, text="DB 경로 복사", command=copy_db_path).pack(side=tk.RIGHT, padx=5)
+        if self.server_running and self.server_url:
+            ttk.Button(
+                top_frame,
+                text="웹 기록 열기",
+                command=lambda: webbrowser.open(self.server_url.rstrip("/") + "/report")
+            ).pack(side=tk.RIGHT, padx=5)
+
+        daily_frame = ttk.LabelFrame(dialog, text="최근 일자별 기록", padding=8)
+        daily_frame.pack(fill=tk.X, padx=10, pady=5)
+        daily_text = ", ".join([f"{row['date']}: {row['count']}건" for row in daily_counts])
+        ttk.Label(daily_frame, text=daily_text if daily_text else "저장된 기록이 없습니다.").pack(anchor="w")
+
+        table_frame = ttk.Frame(dialog)
+        table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        columns = ("created_at", "date", "time_period", "location", "reason", "plate", "mode", "source")
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings")
+        headings = {
+            "created_at": "저장시각",
+            "date": "날짜",
+            "time_period": "시간대",
+            "location": "위치",
+            "reason": "사유",
+            "plate": "차량번호",
+            "mode": "모드",
+            "source": "원본",
+        }
+        widths = {
+            "created_at": 145,
+            "date": 95,
+            "time_period": 70,
+            "location": 90,
+            "reason": 160,
+            "plate": 110,
+            "mode": 60,
+            "source": 160,
+        }
+        for column in columns:
+            tree.heading(column, text=headings[column])
+            tree.column(column, width=widths[column], anchor=tk.W)
+
+        scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        for record in recent_records:
+            tree.insert("", tk.END, values=(
+                record.get("created_at", ""),
+                record.get("date", ""),
+                record.get("time_period", ""),
+                record.get("location", ""),
+                record.get("reason", ""),
+                record.get("plate_number", ""),
+                record.get("mode", ""),
+                record.get("source_filename", ""),
+            ))
+
+        ttk.Button(dialog, text="닫기", command=dialog.destroy).pack(pady=10)
+        self.update_status("과거 기록 표시")
     
     def open_settings_dialog(self):
         """설정 다이얼로그 열기"""
@@ -531,6 +667,18 @@ class ParkingEnforcementGUI:
         
         ttk.Label(section2, text="서버 시작 시 Discord로 알림을 보냅니다.",
                  foreground="#888888").grid(row=1, column=0, columnspan=2, sticky="w", pady=5)
+
+        # === 서버 설정 ===
+        section_server = ttk.LabelFrame(scrollable_frame, text="서버 설정", padding=10)
+        section_server.pack(fill=tk.X, padx=10, pady=10)
+
+        ttk.Label(section_server, text="로컬 포트:").grid(row=0, column=0, sticky="w", pady=5)
+        entries["server_port"] = ttk.Entry(section_server, width=15)
+        entries["server_port"].grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        entries["server_port"].insert(0, self.settings.get("server_port", "5000"))
+
+        ttk.Label(section_server, text="예: 5000, 8080, 18080\n변경 후 서버를 다시 시작해야 적용됩니다.",
+                 foreground="#888888").grid(row=1, column=0, columnspan=3, sticky="w", pady=5)
         
         # === 폴더 경로 설정 ===
         section3 = ttk.LabelFrame(scrollable_frame, text="폴더 경로 설정", padding=10)
@@ -598,6 +746,15 @@ class ParkingEnforcementGUI:
         
         def save_settings():
             """설정 저장"""
+            port_value = entries["server_port"].get().strip()
+            try:
+                port_int = int(port_value)
+                if not 1 <= port_int <= 65535:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("오류", "로컬 포트는 1부터 65535 사이의 숫자여야 합니다.")
+                return
+
             for key, entry in entries.items():
                 self.settings.set(key, entry.get().strip())
             
@@ -709,7 +866,7 @@ class ParkingEnforcementGUI:
             pass
         
         # 포트 사용 확인
-        port = 5000
+        port = self.get_configured_server_port()
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             sock.bind(('127.0.0.1', port))
@@ -748,7 +905,7 @@ class ParkingEnforcementGUI:
                         text=f"{public_url[:30]}..."))
                     # Discord 알림
                     try:
-                        send_discord_webhook(public_url)
+                        send_discord_webhook(public_url, port)
                     except:
                         pass
                 else:

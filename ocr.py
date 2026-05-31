@@ -1,5 +1,6 @@
 import os
 import sys
+import html
 
 os.environ.setdefault("ULTRALYTICS_SKIP_REQUIREMENTS_CHECKS", "1")
 os.environ.setdefault("YOLO_AUTOINSTALL", "false")
@@ -35,11 +36,28 @@ from waitress import serve
 
 # 설정 관리자 import
 from settings_manager import get_settings, init_settings
+from records_store import (
+    add_records,
+    default_db_path,
+    fetch_daily_counts,
+    fetch_recent_records,
+    fetch_record_count,
+)
 
 # ==========================================
 # 1. 시스템 설정 및 라이브러리 로드
 # ==========================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def get_storage_dir():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return BASE_DIR
+
+
+STORAGE_DIR = get_storage_dir()
+DB_PATH = default_db_path(STORAGE_DIR)
 
 # 설정 관리자 초기화
 _app_settings = init_settings()
@@ -84,6 +102,15 @@ def get_cloudflare_tunnel_token():
 
 def get_cloudflare_tunnel_domain():
     return _app_settings.get("cloudflare_tunnel_domain", "")
+
+def get_server_port(default=5000):
+    try:
+        port = int(_app_settings.get("server_port", default))
+        if 1 <= port <= 65535:
+            return port
+    except (TypeError, ValueError):
+        pass
+    return default
 
 # 이전 버전 호환용 상수 (빈 문자열로 유지, 실제로는 함수 사용)
 DISCORD_WEBHOOK_URL = ""
@@ -796,6 +823,7 @@ def result_view(task_id):
 @login_required
 def save():
     entries = []
+    db_records = []
     loc = request.form.get('location', '')
     reason = request.form.get('reason', '')
     report_text = request.form.get('report_text', '')
@@ -808,13 +836,25 @@ def save():
         time_suffix = "오전" if datetime.now().hour < 12 else "오후"
 
     for k, v in request.form.items():
-        if k.startswith('plate_') and v and v.lower() != 's':
+        plate = v.strip() if isinstance(v, str) else ''
+        if k.startswith('plate_') and plate and plate.lower() != 's':
+            source_filename = k[len('plate_'):]
+            today_value = datetime.now().strftime('%Y-%m-%d')
             entries.append({
-                "날짜": datetime.now().strftime('%Y-%m-%d'),
+                "날짜": today_value,
                 "시간대": time_suffix,
                 "단속위치": loc,
                 "사유": reason,
-                "차량번호": v
+                "차량번호": plate
+            })
+            db_records.append({
+                "date": today_value,
+                "time_period": time_suffix,
+                "location": loc,
+                "reason": reason,
+                "plate_number": plate,
+                "source_filename": source_filename,
+                "mode": "web",
             })
 
     if not entries:
@@ -830,8 +870,10 @@ def save():
     os.makedirs(backup_folder, exist_ok=True)
     backup_filename = f"단속내역_{time_suffix}_{timestamp}.xlsx"
     backup_path = os.path.join(backup_folder, backup_filename)
+    backup_relative_path = os.path.join('backup', today_str, backup_filename)
 
     messages = []
+    main_status = "실패"
 
     with excel_lock:
         try:
@@ -866,8 +908,20 @@ def save():
 
         except Exception as e:
             return f"<h3>치명적 저장 오류</h3><p>{str(e)}</p>", 500
-    
-    backup_relative_path = os.path.join('backup', today_str, backup_filename)
+
+        excel_reference = root_filename if main_status == "성공" else backup_relative_path
+        for record in db_records:
+            record["excel_file"] = excel_reference
+
+        try:
+            saved_count = add_records(DB_PATH, db_records)
+            messages.append(f"<b>SQLite history updated:</b> {saved_count} records")
+        except Exception as e:
+            messages.append(
+                f"<br><b>[Warning] SQLite history update failed.</b><br>"
+                f"Excel files were saved, but the local history database was not updated.<br>"
+                f"{html.escape(str(e))}"
+            )
 
     return render_template(
         'success.html', 
@@ -900,7 +954,45 @@ def help_page():
 def report_page():
     files = [f for f in os.listdir(BASE_DIR) if f.endswith('.xlsx') and '주차단속내역' in f]
     files.sort(reverse=True)
-    file_list = "".join([f'<li><a href="/download/{f}">{f}</a></li>' for f in files])
+    file_list = "".join([
+        f'<li><a href="/download/{urllib.parse.quote(f)}">{html.escape(f)}</a></li>'
+        for f in files
+    ])
+
+    try:
+        total_records = fetch_record_count(DB_PATH)
+        daily_counts = fetch_daily_counts(DB_PATH, limit=14)
+        recent_records = fetch_recent_records(DB_PATH, limit=100)
+        history_error = ""
+    except Exception as e:
+        total_records = 0
+        daily_counts = []
+        recent_records = []
+        history_error = html.escape(str(e))
+
+    daily_rows = "".join([
+        f"<tr><td>{html.escape(row['date'])}</td><td>{row['count']}</td></tr>"
+        for row in daily_counts
+    ])
+
+    record_rows = "".join([
+        "<tr>"
+        f"<td>{html.escape(record['created_at'])}</td>"
+        f"<td>{html.escape(record['date'])}</td>"
+        f"<td>{html.escape(record['time_period'])}</td>"
+        f"<td>{html.escape(record['location'])}</td>"
+        f"<td>{html.escape(record['reason'])}</td>"
+        f"<td><b>{html.escape(record['plate_number'])}</b></td>"
+        f"<td>{html.escape(record['mode'])}</td>"
+        f"<td>{html.escape(record.get('source_filename') or '')}</td>"
+        "</tr>"
+        for record in recent_records
+    ])
+
+    history_warning = (
+        f'<p class="warning">SQLite history error: {history_error}</p>'
+        if history_error else ""
+    )
     
     return f"""
     <!DOCTYPE html>
@@ -916,29 +1008,78 @@ def report_page():
             li {{ margin: 10px 0; padding: 10px; background: #f9f9f9; border-bottom: 1px solid #ddd; }}
             a {{ text-decoration: none; color: #007bff; font-weight: bold; }}
             .btn {{ display:inline-block; margin-top:20px; padding:10px 20px; background:#6c757d; color:white; text-decoration:none; border-radius:5px; }}
+            .summary {{ background:#eef7ff; padding:12px; border-radius:8px; margin-bottom:16px; }}
+            table {{ width:100%; border-collapse:collapse; margin:12px 0 24px; font-size:14px; }}
+            th, td {{ border-bottom:1px solid #ddd; padding:8px; text-align:left; vertical-align:top; }}
+            th {{ background:#f3f6f8; }}
+            .scroll {{ overflow-x:auto; }}
+            .warning {{ color:#b00020; font-weight:bold; }}
         </style>
     </head>
     <body>
-        <h2>주차 단속 엑셀 파일 목록</h2>
+        <h2>주차 단속 기록</h2>
+        <div class="summary">
+            SQLite 누적 기록: <b>{total_records}</b>건<br>
+            DB 파일: <code>{html.escape(DB_PATH)}</code>
+        </div>
+        {history_warning}
+
+        <h3>최근 일자별 기록</h3>
+        <table>
+            <thead><tr><th>날짜</th><th>건수</th></tr></thead>
+            <tbody>{daily_rows if daily_rows else '<tr><td colspan="2">저장된 기록이 없습니다.</td></tr>'}</tbody>
+        </table>
+
+        <h3>최근 100건</h3>
+        <div class="scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>저장시각</th><th>날짜</th><th>시간대</th><th>위치</th>
+                        <th>사유</th><th>차량번호</th><th>모드</th><th>원본</th>
+                    </tr>
+                </thead>
+                <tbody>{record_rows if record_rows else '<tr><td colspan="8">저장된 기록이 없습니다.</td></tr>'}</tbody>
+            </table>
+        </div>
+
+        <h3>Excel 파일 목록</h3>
         <ul>
             {file_list if files else "<li>저장된 내역이 없습니다.</li>"}
         </ul>
         <hr>
         <p>※ 파일이 열려있어 저장이 안 된 경우, <b>backup</b> 폴더를 확인하세요.</p>
+        <a href="/download_history_db" class="btn">SQLite DB 다운로드</a>
         <a href="/" class="btn">홈으로 돌아가기</a>
     </body>
     </html>
     """
+
+@app.route('/download_history_db')
+@login_required
+def download_history_db():
+    if not os.path.exists(DB_PATH):
+        try:
+            fetch_record_count(DB_PATH)
+        except Exception:
+            return "SQLite DB 파일을 만들 수 없습니다.", 500
+    return send_from_directory(
+        os.path.dirname(DB_PATH),
+        os.path.basename(DB_PATH),
+        as_attachment=True
+    )
 
 # ==========================================
 # 6. 서버 실행 및 터널링
 # ==========================================
 
 # [추가됨] 디스코드 웹훅 전송 함수
-def send_discord_webhook(tunnel_url):
+def send_discord_webhook(tunnel_url, port=None):
     webhook_url = get_discord_webhook_url()
     if not webhook_url:
         return
+
+    local_port = port if port is not None else get_server_port()
     
     data = {
         "username": "OCR Server Bot",
@@ -948,7 +1089,7 @@ def send_discord_webhook(tunnel_url):
             "color": 65280, # Green color
             "fields": [
                 {"name": "외부 접속 URL", "value": tunnel_url, "inline": False},
-                {"name": "로컬 URL", "value": f"http://127.0.0.1:5000", "inline": False},
+                {"name": "로컬 URL", "value": f"http://127.0.0.1:{local_port}", "inline": False},
                 {"name": "보안 모드", "value": "활성화" if SYSTEM_PASSWORD else "비활성화 (공개)", "inline": True}
             ],
             "footer": {"text": f"Started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"}
@@ -1098,7 +1239,7 @@ if __name__ == '__main__':
     parser.add_argument('--gui', action='store_true', help='GUI 모드로 실행')
     parser.add_argument('--server', action='store_true', help='웹 서버 모드로 실행')
     parser.add_argument('--hybrid', action='store_true', help='하이브리드 모드 (GUI + 백그라운드 서버)')
-    parser.add_argument('--port', type=int, default=5000, help='웹 서버 포트 (기본: 5000)')
+    parser.add_argument('--port', type=int, default=None, help='웹 서버 포트 (기본: 설정값 또는 5000)')
     args = parser.parse_args()
     
     # 기본값: 인수 없이 실행하면 GUI 모드 (EXE 더블클릭 시)
@@ -1121,7 +1262,7 @@ if __name__ == '__main__':
             sys.exit(1)
     else:
         # 서버 모드 실행
-        PORT = args.port
+        PORT = args.port if args.port is not None else get_server_port()
         HOST_IP = '127.0.0.1' 
         
         print("=" * 60)
@@ -1137,7 +1278,7 @@ if __name__ == '__main__':
         print("-" * 60)
         if public_url:
             print(f"[외부 접속 주소] : {public_url}")
-            send_discord_webhook(public_url)
+            send_discord_webhook(public_url, PORT)
         else:
             print("Cloudflare 터널 실패 (로컬 접속만 가능)")
 

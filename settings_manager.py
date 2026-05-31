@@ -19,6 +19,9 @@ class SettingsManager:
         
         # Discord 웹훅 설정
         "discord_webhook_url": "",
+
+        # 서버 설정
+        "server_port": "5000",
         
         # 폴더 경로 설정
         "input_folder": "",  # 빈 문자열이면 기본값 사용
@@ -158,6 +161,14 @@ class SettingsManager:
     @discord_webhook_url.setter
     def discord_webhook_url(self, value: str):
         self.set("discord_webhook_url", value)
+
+    @property
+    def server_port(self) -> str:
+        return self.get("server_port", "5000")
+
+    @server_port.setter
+    def server_port(self, value: str):
+        self.set("server_port", value)
     
     @property
     def input_folder(self) -> str:

@@ -8,6 +8,7 @@
 - **일괄 처리**: 여러 이미지를 업로드하거나 폴더 단위로 선택해 순차 분석합니다.
 - **결과 확인 및 수정**: 인식 결과를 저장 전에 직접 수정하거나 특정 사진을 제외할 수 있습니다.
 - **Excel 저장**: 날짜, 시간대, 단속 위치, 단속 사유, 차량번호를 Excel 파일로 저장합니다.
+- **SQLite 기록 보관**: 웹/GUI에서 저장한 단속 내역을 `parking_records.sqlite3`에 누적 저장합니다.
 - **웹 모드 자동 백업**: 웹에서 저장할 때 `backup/` 폴더에 백업 파일을 함께 생성합니다.
 - **웹 모드**: PC와 모바일 브라우저에서 사진을 업로드하고 결과를 확인할 수 있습니다.
 - **GUI 모드**: Tkinter 기반 로컬 프로그램에서 이미지 선택, 분석, 수정, 저장을 처리할 수 있습니다.
@@ -81,6 +82,7 @@ python ocr.py --hybrid
 - Discord Webhook URL
 - 웹 업로드 폴더
 - 웹 백업 폴더
+- 로컬 서버 포트
 - YOLO 모델 파일
 - 마지막으로 선택한 위치, 사유, 시간대
 
@@ -91,8 +93,10 @@ python ocr.py --hybrid
 - 웹 모드 저장 파일: `주차단속내역_YYYY-MM-DD_오전.xlsx` 또는 `주차단속내역_YYYY-MM-DD_오후.xlsx`
 - 웹 모드 백업 파일: `backup/YYYY-MM-DD/단속내역_오전_HH시MM분SS초.xlsx`
 - GUI 모드 저장 파일: 저장 대화상자에서 사용자가 선택한 `.xlsx` 파일
+- 누적 기록 DB: `parking_records.sqlite3`
 
 Excel 컬럼은 `날짜`, `시간대`, `단속위치`, `사유`, `차량번호`입니다.
+SQLite에는 저장 시각, 날짜, 시간대, 단속 위치, 사유, 차량번호, 원본 파일명, 저장 모드, 연결된 Excel 파일 정보가 함께 저장됩니다.
 
 ## 직접 빌드
 
@@ -127,7 +131,7 @@ ocrtest/
 └─ backup/              # Excel 백업 파일
 ```
 
-`dlls/`, `uploads/`, `backup/`, `.settings`, `cloudflared.exe`, 생성된 Excel 파일은 실행 중 생성되거나 로컬 환경에 따라 달라질 수 있습니다.
+`dlls/`, `uploads/`, `backup/`, `.settings`, `cloudflared.exe`, `parking_records.sqlite3`, 생성된 Excel 파일은 실행 중 생성되거나 로컬 환경에 따라 달라질 수 있습니다.
 
 ## 주의 사항
 
