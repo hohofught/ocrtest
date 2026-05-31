@@ -314,13 +314,90 @@ except Exception as e:
     sys.exit(1)
 
 # YOLO 모델 로드
-YOLO_MODEL_PATH = os.path.join(BASE_DIR, 'best.pt')
-if os.path.exists(YOLO_MODEL_PATH):
-    print(f"YOLO 모델 로드: {YOLO_MODEL_PATH}")
-    model = YOLO(YOLO_MODEL_PATH)
-else:
-    print("기본 모델(yolov8n.pt) 로드. 인식률이 낮을 수 있습니다.")
-    model = YOLO('yolov8n.pt')
+YOLO_FALLBACK_MODEL = 'yolo26n.pt'
+YOLO_MODEL_NAMES = (
+    'best.pt',
+    'best_yolo26.pt',
+    'yolo26n.pt',
+    'yolo26s.pt',
+    'yolo26m.pt',
+    'yolo26l.pt',
+    'yolo26x.pt',
+)
+
+
+def get_runtime_dir():
+    if is_pyinstaller_bundle():
+        return os.path.dirname(sys.executable)
+    return BASE_DIR
+
+
+def get_yolo_search_dirs():
+    dirs = [BASE_DIR]
+    runtime_dir = get_runtime_dir()
+    if runtime_dir not in dirs:
+        dirs.append(runtime_dir)
+    return dirs
+
+
+def find_local_yolo_model(model_name):
+    if not model_name:
+        return None
+
+    expanded = os.path.expandvars(os.path.expanduser(model_name))
+    if os.path.isabs(expanded) and os.path.exists(expanded):
+        return expanded
+
+    for search_dir in get_yolo_search_dirs():
+        candidate = os.path.join(search_dir, expanded)
+        if os.path.exists(candidate):
+            return candidate
+
+    return None
+
+
+def is_ultralytics_model_name(model_name):
+    model_name = model_name or ''
+    if os.path.basename(model_name) != model_name:
+        return False
+    return bool(re.fullmatch(r'[A-Za-z0-9_.-]+\.pt', model_name))
+
+
+def resolve_yolo_model_source():
+    configured = (
+        os.environ.get('PARKING_YOLO_MODEL', '').strip()
+        or os.environ.get('YOLO_MODEL_PATH', '').strip()
+        or _app_settings.get('yolo_model_path', '').strip()
+    )
+
+    if configured:
+        configured = configured.strip('"\'')
+        local_model = find_local_yolo_model(configured)
+        if local_model:
+            return local_model
+        if is_ultralytics_model_name(configured):
+            return configured
+        print(f"YOLO 모델 설정을 찾을 수 없습니다: {configured}")
+
+    for model_name in YOLO_MODEL_NAMES:
+        local_model = find_local_yolo_model(model_name)
+        if local_model:
+            return local_model
+
+    return YOLO_FALLBACK_MODEL
+
+
+YOLO_MODEL_SOURCE = resolve_yolo_model_source()
+try:
+    print(f"YOLO 모델 로드: {YOLO_MODEL_SOURCE}")
+    model = YOLO(YOLO_MODEL_SOURCE)
+except Exception as e:
+    print(f"YOLO 모델 로드 실패: {e}")
+    if YOLO_MODEL_SOURCE != YOLO_FALLBACK_MODEL:
+        print(f"기본 YOLO26 모델({YOLO_FALLBACK_MODEL})로 재시도합니다.")
+        model = YOLO(YOLO_FALLBACK_MODEL)
+    else:
+        raise
 
 LOCATIONS = [
     "1동", "2동", "3동", "4동", "5동", "6동", "7동", "8동", "9동", "10동",
@@ -503,7 +580,11 @@ def _detect_best_plate_impl(img_path):
         try:
             results = model(original_img, conf=0.25, verbose=False)
             for r in results:
-                for box in r.boxes:
+                boxes = getattr(r, 'boxes', None)
+                if boxes is None:
+                    continue
+
+                for box in boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     box_w = max(1, x2 - x1)
                     box_h = max(1, y2 - y1)

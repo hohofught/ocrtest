@@ -14,8 +14,8 @@ Pillow>=9.0.0
 pandas>=1.3.0
 openpyxl>=3.0.0
 
-# 객체 탐지 (YOLO)
-ultralytics>=8.0.0
+# 객체 탐지 (YOLO, YOLO26 지원)
+ultralytics>=8.4.0
 
 # HTTP 요청
 requests>=2.25.0

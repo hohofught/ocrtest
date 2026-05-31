@@ -541,6 +541,15 @@ class ParkingEnforcementGUI:
             if folder:
                 entry_widget.delete(0, tk.END)
                 entry_widget.insert(0, folder)
+
+        def browse_model_file(entry_widget):
+            filepath = filedialog.askopenfilename(
+                title="YOLO 모델 파일 선택",
+                filetypes=[("YOLO 모델", "*.pt"), ("모든 파일", "*.*")]
+            )
+            if filepath:
+                entry_widget.delete(0, tk.END)
+                entry_widget.insert(0, filepath)
         
         # 입력 폴더
         ttk.Label(section3, text="입력 폴더:").grid(row=0, column=0, sticky="w", pady=5)
@@ -568,6 +577,20 @@ class ParkingEnforcementGUI:
         
         ttk.Label(section3, text="비워두면 기본 경로(프로그램 폴더)를 사용합니다.",
                  foreground="#888888").grid(row=3, column=0, columnspan=3, sticky="w", pady=5)
+
+        # === YOLO 모델 설정 ===
+        section4 = ttk.LabelFrame(scrollable_frame, text="YOLO 모델 설정", padding=10)
+        section4.pack(fill=tk.X, padx=10, pady=10)
+
+        ttk.Label(section4, text="모델 파일:").grid(row=0, column=0, sticky="w", pady=5)
+        entries["yolo_model_path"] = ttk.Entry(section4, width=40)
+        entries["yolo_model_path"].grid(row=0, column=1, padx=5, pady=5)
+        entries["yolo_model_path"].insert(0, self.settings.get("yolo_model_path", ""))
+        ttk.Button(section4, text="찾아보기",
+                  command=lambda: browse_model_file(entries["yolo_model_path"])).grid(row=0, column=2, padx=5)
+
+        ttk.Label(section4, text="예: best.pt, best_yolo26.pt, yolo26n.pt 또는 .pt 파일 경로\n변경 후 프로그램을 재시작해야 적용됩니다.",
+                 foreground="#888888").grid(row=1, column=0, columnspan=3, sticky="w", pady=5)
         
         # === 버튼 영역 ===
         button_frame = ttk.Frame(scrollable_frame)

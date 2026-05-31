@@ -143,6 +143,14 @@ unused_native_modules = [
     'chardet',
 ]
 
+yolo_model_datas = []
+for filename in os.listdir(base_dir):
+    filename_lower = filename.lower()
+    if filename_lower == 'best.pt' or filename_lower == 'best_yolo26.pt' or (
+        filename_lower.startswith('yolo26') and filename_lower.endswith('.pt')
+    ):
+        yolo_model_datas.append((os.path.join(base_dir, filename), '.'))
+
 a = Analysis(
     ['ocr.py'],
     pathex=[base_dir],
@@ -153,9 +161,8 @@ a = Analysis(
     datas=[
         ('templates', 'templates'),
         ('static', 'static'),
-        ('best.pt', '.'),
         ('dlls/oneocr.onemodel', 'dlls'),
-    ] + manual_tcl_tk_datas,
+    ] + yolo_model_datas + manual_tcl_tk_datas,
     hiddenimports=[
         'gui',
         'dll_extractor',

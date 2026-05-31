@@ -24,6 +24,9 @@ class SettingsManager:
         "input_folder": "",  # 빈 문자열이면 기본값 사용
         "output_folder": "",  # 백업 폴더
         "excel_save_folder": "",  # Excel 저장 위치
+
+        # YOLO 모델 설정
+        "yolo_model_path": "",  # 빈 문자열이면 best.pt -> YOLO26 기본 모델 순서로 사용
         
         # 마지막 선택 값 (UI 상태 유지)
         "last_location": "",
@@ -179,6 +182,14 @@ class SettingsManager:
     @excel_save_folder.setter
     def excel_save_folder(self, value: str):
         self.set("excel_save_folder", value)
+
+    @property
+    def yolo_model_path(self) -> str:
+        return self.get("yolo_model_path", "")
+
+    @yolo_model_path.setter
+    def yolo_model_path(self, value: str):
+        self.set("yolo_model_path", value)
 
 
 # 전역 설정 관리자 인스턴스 (싱글톤 패턴)
