@@ -12,6 +12,8 @@ Tkinter 기반 데스크톱 애플리케이션
 import os
 import sys
 import ctypes
+import socket
+import subprocess
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -516,19 +518,26 @@ class ParkingEnforcementGUI:
             )
     
     def _process_images(self):
-        """이미지 처리 (백그라운드 스레드)"""
+        """
+        [핵심 코드: 백그라운드 추론 호출 루프]
+        스레드 락을 방지하기 위해 Tkinter 메인 스레드가 아닌 백그라운드 스레드에서 순차적으로 이미지를 OCR 워커로 전달합니다.
+        """
         total = len(self.image_files)
         success_count = 0
         failure_count = 0
         
+        # [루프] 로드된 이미지 목록을 순차적으로 추론기에 제출
         for i, img_path in enumerate(self.image_files):
+            # [분기] 사용자가 중지 버튼을 눌렀을 때 루프 조기 탈출
             if not self.processing:
                 break
             
             try:
-                # detect_best_plate는 ocr.py의 추론 워커 안에서 순차 실행된다.
+                # [파이프라인] ocr.py의 스레드 직렬화 큐(InferenceWorker)로 이미지 추론 요청 제출
                 plate, _ = detect_best_plate(img_path)
                 self.results[i]["plate"] = plate if plate else ""
+
+                # [분기] 인식된 텍스트 유무에 따라 성공/실패 카운트 분기
                 if plate:
                     success_count += 1
                 else:
@@ -537,13 +546,14 @@ class ParkingEnforcementGUI:
                 self.results[i]["plate"] = ""
                 failure_count += 1
             
-            # UI 업데이트 (메인 스레드에서)
+            # [파이프라인] 현재 진행률 계산 및 UI 스레드 동기화 호출
             progress = ((i + 1) / total) * 100
-            # 작업 스레드에서는 root.after를 통해서만 Tkinter 위젯을 갱신한다.
+            # [주의] 작업 스레드에서 직접 Tkinter 위젯을 갱신하면 크래시가 발생하므로 root.after를 사용해 메인 스레드로 전달
             self.root.after(0, lambda p=progress, idx=i: self._update_progress(p, idx))
+
         self.windows_notifications_enabled = bool(self.settings.get("windows_notifications_enabled", True))
-        
         self.processing = False
+        # [파이프라인] 추론 프로세스 완료 및 팝업/알림 메인 스레드 예약 호출
         self.root.after(0, lambda s=success_count, f=failure_count: self._show_processing_complete(s, f))
     
     def _update_progress(self, progress, index):
@@ -559,26 +569,29 @@ class ParkingEnforcementGUI:
         self.update_status("분석 중지됨")
     
     def save_to_excel(self):
-        """Excel 저장"""
+        """
+        [핵심 코드: Excel 데이터 내보내기 및 DB 싱크 파이프라인]
+        결과 필터링 -> 데이터프레임 빌드 -> 저장 대화상자 표시 -> Excel 파일 작성 -> SQLite DB 동기화
+        """
+        # [분기] 분석 결과가 없거나 비어있는 경우 저장 스킵
         if not self.results:
             messagebox.showwarning("경고", "저장할 데이터가 없습니다.")
             return
         self.remember_custom_inputs()
         
-        # 유효한 번호판만 필터링
-        # 빈 OCR 결과는 저장하지 않는다. 포함해야 하는 값은 사용자가 저장 전에 수정할 수 있다.
+        # [분기/필터링] 빈 번호판(인식 실패 후 수정도 안 한 데이터)을 제외한 유효 번호판 목록만 축출
         valid_results = [r for r in self.results if r.get("plate")]
         
         if not valid_results:
             messagebox.showwarning("경고", "인식된 번호판이 없습니다.")
             return
         
-        # DataFrame 생성
         entries = []
         db_records = []
         today_value = datetime.now().strftime('%Y-%m-%d')
+
+        # [루프] 유효 행 데이터 가공 (Excel 내보내기용 및 SQLite DB 누적용을 병렬 가공)
         for r in valid_results:
-            # Excel 행과 SQLite 행을 같은 원본 결과에서 함께 만든다.
             entries.append({
                 "날짜": today_value,
                 "시간대": self.ampm_var.get(),
@@ -599,7 +612,7 @@ class ParkingEnforcementGUI:
         
         df = pd.DataFrame(entries)
         
-        # 파일 저장 대화상자
+        # 파일 저장 대화상자 호출 (사용자가 지정할 저장 경로 접수)
         filename = f"주차단속내역_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.xlsx"
         filepath = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
@@ -607,14 +620,17 @@ class ParkingEnforcementGUI:
             initialfile=filename
         )
         
+        # [분기] 사용자가 저장 경로를 지정하고 확인을 눌렀을 때
         if filepath:
             try:
+                # 엑셀 파일 저장 실행
                 df.to_excel(filepath, index=False)
                 for record in db_records:
-                    # GUI에서 선택한 정확한 Excel 경로를 이력 행에 저장한다.
+                    # SQLite DB 이력 필드에도 사용자가 실제 저장한 Excel 전체 파일 경로를 할당
                     record["excel_file"] = filepath
+
+                # [분기/예외 처리] SQLite DB에 데이터 밀어넣기 (엑셀 저장이 완료된 상태이므로 DB 쓰기는 보조 단계로 예외를 분리)
                 try:
-                    # SQLite에 일시 오류가 있어도 Excel 저장은 성공할 수 있게 이력 저장은 부가 처리한다.
                     add_records(DB_PATH, db_records)
                     history_message = "\nSQLite 기록 저장 완료"
                 except Exception as history_error:
@@ -623,6 +639,7 @@ class ParkingEnforcementGUI:
                 messagebox.showinfo("성공", f"저장 완료: {filepath}\n총 {len(entries)}건{history_message}")
                 self.update_status(f"Excel 저장 완료: {len(entries)}건")
             except Exception as e:
+                # 엑셀 파일에 쓰기 권한이 없거나 다른 프로세스가 파일 락을 쥐고 있을 때 예외 발생
                 messagebox.showerror("오류", f"저장 실패: {e}")
     
     def reset_all(self):
@@ -1041,15 +1058,15 @@ class ParkingEnforcementGUI:
                 pass
 
     def start_background_server(self):
-        """백그라운드 웹 서버 시작"""
-        import socket
-        import subprocess
-
+        """
+        [핵심 코드: 백그라운드 웹 서버 시작 파이프라인]
+        터널 프로세스 초기화 -> 로컬 포트 유효성 검증 -> 스레드 및 이벤트 생성 -> Waitress 서버 기동 -> Cloudflare 터널 및 Discord 웹훅 전송
+        """
+        # [분기] 이미 서버가 돌아가는 중이면 무시
         if self.server_running:
             return
         
-        # 새 공개 URL을 만들기 전에 남아 있는 터널 프로세스를 정리한다.
-        # 기존 cloudflared 프로세스 정리
+        # 새 공개 URL을 만들기 전에 남아 있는 좀비 터널 프로세스를 사전에 강제 정리
         try:
             subprocess.run(
                 ["taskkill", "/f", "/im", "cloudflared.exe"],
@@ -1059,13 +1076,13 @@ class ParkingEnforcementGUI:
         except:
             pass
         
-        # 포트 사용 확인
+        # 포트 충돌 검사 (대화상자로 에러 표시 유도)
         port = self.get_configured_server_port()
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            # 명확한 오류를 보여주기 위해 waitress 시작 전에 포트 바인딩을 시험한다.
             sock.bind(('127.0.0.1', port))
         except OSError:
+            # [분기/예외 처리] 포트 선점으로 기동 실패 시 에러 팝업
             messagebox.showerror("오류", f"포트 {port}가 이미 사용 중입니다.\n다른 서버가 실행 중인지 확인하세요.")
             return
         finally:
@@ -1074,13 +1091,14 @@ class ParkingEnforcementGUI:
         stop_event = threading.Event()
         self.server_stop_event = stop_event
         
+        # [파이프라인] 백그라운드에서 실질적인 Waitress 구동을 수행할 스레드 함수 정의
         def run_server():
-            # 서버 스레드가 waitress.run()을 소유하고, UI 갱신은 root.after로 전달한다.
             http_server = None
             try:
                 from ocr import app, init_cloudflare_tunnel, send_discord_webhook
                 from waitress import create_server
 
+                # WSGI 컨테이너(Waitress)를 활용해 웹 서비스 기동 준비
                 http_server = create_server(
                     app, host='0.0.0.0', port=port,
                     threads=10, channel_timeout=3000
@@ -1089,24 +1107,26 @@ class ParkingEnforcementGUI:
                 with self.server_lock:
                     self.http_server = http_server
                 
-                # Cloudflare Tunnel 시도
+                # Cloudflare Tunnel 실행을 시도하여 외부 접속 가능 링크 획득
                 public_url = init_cloudflare_tunnel(port)
 
+                # 기동 진행 중 사용자가 서버 중지를 클릭했는지 검사
                 if stop_event.is_set():
                     return
                 
+                # [분기] 외부 터널링 주소가 발급된 경우와 실패한 로컬 주소 분기
                 if public_url:
-                    # 공개 터널 URL이 준비되면 로컬 URL 대신 사용한다.
                     self.server_url = public_url
+                    # 메인 스레드에 터널 주소 텍스트 갱신 전달
                     self.root.after(0, lambda: self.server_status_label.configure(
                         text=f"{public_url[:30]}..."))
-                    # Discord 알림
+                    # Discord 채널로 서버 실행 링크 통보
                     try:
                         send_discord_webhook(public_url, port)
                     except:
                         pass
                 else:
-                    # 터널링에 실패하면 로컬 전용 접속으로 대체한다.
+                    # [Fallback 분기] 로컬 접속 주소만 활성화
                     self.server_url = f"http://127.0.0.1:{port}"
                     self.root.after(0, lambda: self.server_status_label.configure(
                         text="로컬만"))
@@ -1114,21 +1134,24 @@ class ParkingEnforcementGUI:
                 if stop_event.is_set():
                     return
 
+                # Waitress 무한루프 구동 (동기 방식 블로킹 시작)
                 http_server.run()
             except Exception as e:
+                # 기동 중 크래시 발생 시 에러 팝업을 메인 스레드에서 생성
                 if not stop_event.is_set():
                     self.root.after(0, lambda: messagebox.showerror("서버 오류", str(e)))
                     self.root.after(0, lambda: self.stop_background_server())
             finally:
+                # 최종 클린업 프로세스
                 if http_server:
                     self._close_waitress_server(http_server)
                 with self.server_lock:
-                    # 이 스레드가 아직 해당 서버를 소유한 경우에만 현재 서버 참조를 비운다.
                     if self.http_server is http_server:
                         self.http_server = None
                 if self.server_stop_event is stop_event:
                     self.server_stop_event = None
         
+        # 백그라운드 데몬 스레드로 웹 서버 실행
         self.server_thread = threading.Thread(target=run_server, daemon=True)
         self.server_thread.start()
         self.server_running = True
@@ -1142,28 +1165,30 @@ _lock_file_handle = None
 _lock_file_path = None
 
 def acquire_lock():
-    """락 파일을 획득하여 중복 실행 방지"""
+    """
+    [핵심 코드: 단일 인스턴스 실행 잠금(Locking)]
+    시스템 임시 폴더에 파일 생성 -> msvcrt 독점적 잠금 설정(LK_NBLCK) -> 현재 PID 기록
+    중복 실행 감지 시 에러를 던져 중복 프로세스를 막습니다.
+    """
     global _lock_file_handle, _lock_file_path
     
     import tempfile
     import msvcrt
     
-    # 임시 파일 락은 같은 PC에서 EXE를 여러 번 실행하는 경우도 감지할 수 있다.
-    # 락 파일 경로 (사용자 temp 디렉토리)
+    # OS 임시 디렉토리에 전용 락 파일 경로 구성
     _lock_file_path = os.path.join(tempfile.gettempdir(), "parking_enforcement_gui.lock")
     
     try:
-        # 락 파일 열기 또는 생성
+        # 락 파일 핸들 오픈
         _lock_file_handle = open(_lock_file_path, 'w')
-        # 비차단 락을 사용해 두 번째 인스턴스가 빠르게 실패하게 한다.
-        # 독점적 락 시도 (비차단)
+        # [파이프라인] Windows 네이티브 API (msvcrt)를 이용해 파일에 비차단(Non-blocking) 독점 락 적용
         msvcrt.locking(_lock_file_handle.fileno(), msvcrt.LK_NBLCK, 1)
-        # 현재 PID 기록
+        # 락 획득 성공 시 모니터링을 위해 현재 프로세스 PID 기록
         _lock_file_handle.write(str(os.getpid()))
         _lock_file_handle.flush()
         return True
     except (IOError, OSError):
-        # 이미 다른 인스턴스가 실행 중
+        # [분기] 파일이 다른 인스턴스에 의해 선점되어 잠겨있는 경우 락 획득 실패 반환
         if _lock_file_handle:
             try:
                 _lock_file_handle.close()

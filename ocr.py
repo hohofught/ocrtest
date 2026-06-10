@@ -292,9 +292,15 @@ class OcrEngine:
             raise RuntimeError(f"{msg} (Code: {code})")
 
     def recognize_numpy(self, img_np):
+        """
+        [핵심 코드: OCR 파이프라인 호출]
+        BGRA 변환 -> C/C++ 구조체 래핑 -> Native DLL(RunOcrPipeline) 실행 -> 결과 파싱 및 리소스 해제
+        """
+        # [분기] 비어있는 이미지 예외 처리
         if img_np is None or img_np.size == 0:
             return ""
 
+        # [분기/파이프라인] OneOCR DLL이 요구하는 BGRA 32비트 포맷으로 채널 변환
         if len(img_np.shape) == 2:
             img_bgra = cv2.cvtColor(img_np, cv2.COLOR_GRAY2BGRA)
         elif len(img_np.shape) == 3:
@@ -303,21 +309,25 @@ class OcrEngine:
             return ""
 
         h, w = img_bgra.shape[:2]
-        step = w * 4
+        step = w * 4 # BGRA 채널당 1바이트씩 총 4바이트
         
+        # Ctypes 라이브러리에 연동할 C 구조체(ImageStructure) 인스턴스 생성
         img_struct = ImageStructure(
             type=3, width=w, height=h, _reserved=0, step_size=step,
             data_ptr=img_bgra.ctypes.data_as(c_ubyte_p)
         )
 
         res_handle = c_int64()
+        # [파이프라인] Native DLL 추론 실행
         if ocr_dll.RunOcrPipeline(self.pipeline, byref(img_struct), self.proc_opts, byref(res_handle)) != 0:
-            return ""
+            return "" # DLL 실행 에러 발생 시 공백 리턴
 
+        # [파이프라인] 인식된 텍스트 라인 개수 획득
         line_count = c_int64()
         ocr_dll.GetOcrLineCount(res_handle, byref(line_count))
         
         full_text = []
+        # [루프/파이프라인] 각 라인별 텍스트를 디코딩하여 결과 수집
         for i in range(line_count.value):
             l_handle = c_int64()
             ocr_dll.GetOcrLine(res_handle, i, byref(l_handle))
@@ -325,11 +335,13 @@ class OcrEngine:
             ocr_dll.GetOcrLineContent(l_handle, byref(content))
             if content.value:
                 try:
+                    # UTF-8 바이너리 데이터 문자열 변환 (에러 무시)
                     text = content.value.decode('utf-8', errors='ignore')
                     full_text.append(text)
                 except:
                     pass
         
+        # [파이프라인] 메모리 누수 방지를 위한 Native C++ 할당 리소스 해제
         ocr_dll.ReleaseOcrResult(res_handle)
         return " ".join(full_text)
 
@@ -351,6 +363,10 @@ YOLO_MODEL_NAMES = (
     'yolo26l.pt',
     'yolo26x.pt',
 )
+YOLO_CONFIDENCE = 0.25
+INFERENCE_TIMEOUT_SECONDS = 3.0
+PLATE_PAD_X_RATIO = 0.10
+PLATE_PAD_Y_RATIO = 0.12
 
 
 def get_runtime_dir():
@@ -391,26 +407,33 @@ def is_ultralytics_model_name(model_name):
 
 
 def resolve_yolo_model_source():
+    """
+    [핵심 코드: YOLO 모델 경로 결정 파이프라인]
+    우선순위: 환경변수(PARKING_YOLO_MODEL, YOLO_MODEL_PATH) -> 로컬 설정(.settings) -> 미리 정의된 모델 배열 순회 -> 기본 Fallback 모델
+    """
     configured = (
         os.environ.get('PARKING_YOLO_MODEL', '').strip()
         or os.environ.get('YOLO_MODEL_PATH', '').strip()
         or _app_settings.get('yolo_model_path', '').strip()
     )
 
+    # [분기 1] 명시적인 사용자 설정 경로 또는 환경변수가 존재할 때
     if configured:
         configured = configured.strip('"\'')
         local_model = find_local_yolo_model(configured)
         if local_model:
-            return local_model
+            return local_model # 로컬 절대/상대 경로에 존재하면 반환
         if is_ultralytics_model_name(configured):
-            return configured
+            return configured # 허브 모델인 경우 Ultralytics가 다운로드하도록 모델명 반환
         print(f"YOLO 모델 설정을 찾을 수 없습니다: {configured}")
 
+    # [분기 2] 명시적 설정이 없거나 로드 실패 시, 디렉토리 내부의 우선순위별 기본 pt 탐색
     for model_name in YOLO_MODEL_NAMES:
         local_model = find_local_yolo_model(model_name)
         if local_model:
-            return local_model
+            return local_model # 존재하는 최선의 로컬 가중치 반환
 
+    # [분기 3] 매칭되는 모델이 없는 경우 최종 fallback 모델 사용
     return YOLO_FALLBACK_MODEL
 
 
@@ -523,28 +546,38 @@ def stitch_broken_plate(raw_text):
     return None
 
 def process_and_ocr(crop_img, start_time, timeout=3.0, is_full_image=False):
-    """이미지에서 번호판 텍스트 추출 (최적화 버전)"""
+    """
+    [핵심 코드: 이미지 전처리 및 OCR 인식 최적화 파이프라인]
+    Grayscale -> Side Masking -> 다중 필터 적용 -> 다중 스케일링 -> 번호판 형태학적 정규화 및 패턴 매칭
+    """
+    # 3채널 컬러 이미지는 1채널 흑백 이미지(Grayscale)로 변환
     if crop_img.ndim == 3:
         gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
     else:
         gray = crop_img
 
+    # [분기/최적화] 크롭된 차량 번호판 영역일 경우 불필요한 번호판 외부 테두리를 제거하기 위해 마스킹 수행
     if not is_full_image:
         gray = mask_side_regions(gray, ratio=0.08)  # 마스킹 비율 축소
 
-    # 최적화된 필터 순서 (가장 효과적인 것부터)
+    padding = 15
+    threshold_img = apply_threshold(gray)
+
+    # OCR 성공률이 좋았던 전처리 순서다. 순서를 바꾸면 인식률/속도가 달라질 수 있다.
     filters = [
-        ("CLAHE", add_padding(apply_clahe(gray), pad_size=15)),  # 패딩 축소
-        ("Gray+Pad", add_padding(gray, pad_size=15)),
-        ("Thresh", add_padding(apply_threshold(gray), pad_size=15)),
+        ("CLAHE", add_padding(apply_clahe(gray), pad_size=padding)),
+        ("Gray+Pad", add_padding(gray, pad_size=padding)),
+        ("Thresh", add_padding(threshold_img, pad_size=padding)),
     ]
     
-    # 전체 이미지가 아닌 경우에만 추가 필터 적용
+    # [분기] 크롭 이미지의 경우에만 팽창(Dilate) 필터 추가 (글자 굵기 보정)
     if not is_full_image:
         kernel = np.ones((2, 2), np.uint8)  # 커널 크기 축소
-        filters.append(("Dilate", add_padding(cv2.dilate(apply_threshold(gray), kernel, iterations=1), pad_size=15)))
+        dilated_img = cv2.dilate(threshold_img, kernel, iterations=1)
+        dilated_with_padding = add_padding(dilated_img, pad_size=padding)
+        filters.append(("Dilate", dilated_with_padding))
 
-    # 스케일 최적화 (1.5배가 더 효율적)
+    # [분기/스케일 최적화] 스케일링 후보 배율 선택 (크롭 이미지는 1.5배 및 1.0배 순회)
     if is_full_image:
         scales = [1.0]
     else:
@@ -552,27 +585,40 @@ def process_and_ocr(crop_img, start_time, timeout=3.0, is_full_image=False):
 
     candidates = []
 
+    # [중첩 루프 파이프라인] 다중 스케일 및 다중 필터 조합을 통한 OCR 텍스트 획득 프로세스
     for scale in scales:
         for _, processed_img in filters:
+            # 타임아웃 검사 분기 (스레드 블로킹 방지)
             if time.time() - start_time > timeout:
                 break
             
             try:
+                # [분기] 배율 조절이 필요한 경우 보간법(INTER_CUBIC)을 사용해 리사이징
+                target_img = processed_img
                 if scale != 1.0:
-                    target_img = cv2.resize(processed_img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-                else:
-                    target_img = processed_img
+                    target_img = cv2.resize(
+                        processed_img,
+                        None,
+                        fx=scale,
+                        fy=scale,
+                        interpolation=cv2.INTER_CUBIC
+                    )
 
+                # DLL 기반 문자 인식 실행
                 raw_text = global_ocr.recognize_numpy(target_img)
+                # 정규식 패턴 분석을 통한 번호판 텍스트 정제
                 plate = smart_plate_filter(raw_text)
 
                 if plate:
                     candidates.append(plate)
+                    # [분기] 전체 이미지 스캔 모드인 경우 유효 패턴이 나오는 즉시 즉각 리턴하여 속도 단축
                     if is_full_image:
                         return [plate]
+                    # [분기/안정성] 중복 검증: 동일 결과가 2회 이상 추출되면 신뢰도가 높으므로 즉시 리턴
                     if candidates.count(plate) >= 2:
                         return [plate]
                 
+                # [분기/예외 처리] 번호판이 끊겨서 인식되었을 때 붙여주는 스티칭 모드 (전체 이미지 모드 한정)
                 elif is_full_image:
                     stitched = stitch_broken_plate(raw_text)
                     if stitched:
@@ -584,59 +630,108 @@ def process_and_ocr(crop_img, start_time, timeout=3.0, is_full_image=False):
         if time.time() - start_time > timeout:
             break
 
+    # [결과 반환 분기] 최종 후보군 중 가장 빈도수가 높은 매칭 단어 반환
     if candidates:
         most_common = Counter(candidates).most_common(1)
         return [most_common[0][0]]
     
     return []
 
+
+def crop_yolo_box(original_img, box_xyxy):
+    """YOLO 박스 좌표에 OCR용 여백을 더해 이미지 경계 안에서 잘라낸다."""
+    img_h, img_w = original_img.shape[:2]
+    x1, y1, x2, y2 = map(int, box_xyxy)
+    box_w = max(1, x2 - x1)
+    box_h = max(1, y2 - y1)
+
+    pad_x = int(box_w * PLATE_PAD_X_RATIO)
+    pad_y = int(box_h * PLATE_PAD_Y_RATIO)
+
+    left = max(0, x1 - pad_x)
+    top = max(0, y1 - pad_y)
+    right = min(img_w, x2 + pad_x)
+    bottom = min(img_h, y2 + pad_y)
+
+    return original_img[top:bottom, left:right], y2
+
+
+def candidate_priority(candidate):
+    """YOLO 크롭을 먼저 보고, 그 안에서는 화면 아래쪽 박스를 먼저 본다."""
+    return candidate['is_full'], -candidate['y2']
+
+
+def collect_yolo_candidates(original_img, log_lines):
+    """
+    [핵심 코드: 실제 YOLO 추론 호출]
+    detect_best_plate() 경로에서 먼저 실행되어 번호판 후보 크롭을 만든다.
+    """
+    candidates = []
+
+    if not model:
+        log_lines.append("YOLO 모델 없음: 전체 이미지 스캔으로 진행")
+        return candidates
+
+    try:
+        results = model(original_img, conf=YOLO_CONFIDENCE, verbose=False)
+        for result in results:
+            boxes = getattr(result, 'boxes', None)
+            if boxes is None:
+                continue
+
+            for box in boxes:
+                crop, y2 = crop_yolo_box(original_img, box.xyxy[0])
+                if crop.size > 0:
+                    candidate = {'y2': y2, 'crop': crop, 'is_full': False}
+                    candidates.append(candidate)
+        del results
+    except Exception as e:
+        log_lines.append(f"YOLO Error: {e}")
+
+    return candidates
+
+
 def _detect_best_plate_impl(img_path):
+    """
+    [핵심 코드: 객체 탐지 및 번호판 추론 코어 파이프라인]
+    이미지 로드 -> YOLO 객체 검출 분기 -> 좌표 확장 크롭 수집 -> 스캔 우선순위 정렬 -> 순차 OCR 시도
+    """
     start_time = time.time()
-    timeout = 3.0
+    timeout = INFERENCE_TIMEOUT_SECONDS  # 추론 세션당 최대 처리 시간
     log_lines = []
     best_plate = ""
 
+    # 이미지 파일 읽기
     original_img = cv2.imread(img_path)
+    # [분기/예외 처리] 이미지 파일 손상 또는 읽기 실패 예외 처리
     if original_img is None:
         return "읽기실패", []
 
-    h, w, _ = original_img.shape
-    candidates_boxes = []
+    img_h = original_img.shape[0]
+    candidates_boxes = collect_yolo_candidates(original_img, log_lines)
 
-    if model:
-        try:
-            results = model(original_img, conf=0.25, verbose=False)
-            for r in results:
-                boxes = getattr(r, 'boxes', None)
-                if boxes is None:
-                    continue
+    # [Fallback 장치 추가] YOLO 모델 오검출에 대응하기 위해 원본 전체 이미지 스캔 옵션을 항상 후보군 리스트의 맨 마지막에 삽입
+    full_image_candidate = {'y2': img_h, 'crop': original_img, 'is_full': True}
+    candidates_boxes.append(full_image_candidate)
 
-                for box in boxes:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    box_w = max(1, x2 - x1)
-                    box_h = max(1, y2 - y1)
-                    pad_x = int(box_w * 0.10) 
-                    pad_y = int(box_h * 0.12)
-                    crop = original_img[max(0, y1 - pad_y):min(h, y2 + pad_y), max(0, x1 - pad_x):min(w, x2 + pad_x)]
-                    if crop.size > 0:
-                        candidates_boxes.append({'y2': y2, 'crop': crop, 'is_full': False})
-            del results
-        except Exception as e:
-            log_lines.append(f"YOLO Error: {e}")
-
-    candidates_boxes.append({'y2': h, 'crop': original_img, 'is_full': True})
-    candidates_boxes.sort(key=lambda x: (x['is_full'], -x['y2']))
+    # [최적화] 우선순위 정렬: 1. YOLO로 탐지된 크롭 이미지를 먼저 처리, 2. 화면 아래쪽에 배치된(y2가 큰) 번호판을 먼저 스캔
+    candidates_boxes.sort(key=candidate_priority)
 
     plate_found = False
+    # [순차 루프] 후보 리스트를 돌며 하나씩 OCR 프로세싱 진행
     for item in candidates_boxes:
+        # 타임아웃 발생 시 루프 즉시 탈출
         if time.time() - start_time > timeout:
             log_lines.append("[Timeout] 시간 초과")
             break
 
         is_full = item['is_full']
-        label = "전체 스캔" if is_full else f"박스(y2:{item['y2']})"
-        found_plates = process_and_ocr(item['crop'], start_time, timeout, is_full_image=is_full)
+        crop_img = item['crop']
+        y2 = item['y2']
+        label = "전체 스캔" if is_full else f"박스(y2:{y2})"
+        found_plates = process_and_ocr(crop_img, start_time, timeout, is_full_image=is_full)
         
+        # [성공 분기] 번호판이 정상 탐색 및 디코딩되었을 때 루프 탈출
         if found_plates:
             best_plate = found_plates[0]
             log_lines.append(f"[인식 성공] {best_plate} - {label}")
@@ -646,7 +741,7 @@ def _detect_best_plate_impl(img_path):
     if not plate_found:
         log_lines.append("최종 인식 실패")
 
-    del original_img
+    del original_img # 메모리 참조 즉시 해제를 통한 GC 부하 완화
     return best_plate, log_lines
 
 class InferenceJob:
@@ -658,10 +753,14 @@ class InferenceJob:
 
 
 class InferenceWorker:
-    """Serializes all YOLO and OneOCR calls onto one worker thread."""
+    """
+    [핵심 코드: 스레드 직렬화 파이프라인]
+    모든 YOLO 및 OneOCR API 호출을 하나의 전용 백그라운드 추론 스레드로 몰아서(Serialization) 순차 처리합니다.
+    C/C++ 기반 Native DLL과 YOLO 내부 엔진의 멀티스레드 비안전성(Thread-safety) 문제를 예방합니다.
+    """
 
     def __init__(self):
-        self._jobs = queue.Queue()
+        self._jobs = queue.Queue() # 스레드 간 동기화를 위한 스레드 안전 큐 생성
         self._thread = threading.Thread(
             target=self._run,
             name="ocr-inference-worker",
@@ -670,18 +769,21 @@ class InferenceWorker:
         self._thread.start()
 
     def submit(self, img_path):
+        # [분기] 만약 현재 스레드가 이미 워커 스레드 자신이라면 큐 대기 없이 즉시 메서드를 호출하여 교착 상태(Deadlock)를 방지
         if threading.current_thread() is self._thread:
             return _detect_best_plate_impl(img_path)
 
         job = InferenceJob(img_path)
-        self._jobs.put(job)
-        job.done.wait()
+        self._jobs.put(job) # 작업을 큐에 삽입
+        job.done.wait() # 백그라운드 스레드에서 처리가 완료될 때까지 대기(블로킹)
 
+        # 예외 발생 시 전파
         if job.error:
             raise job.error
         return job.result
 
     def _run(self):
+        # [루프] 무한 루프 상태로 큐에 들어오는 추론 태스크들을 순차 처리하는 파이프라인
         while True:
             job = self._jobs.get()
             try:
@@ -689,7 +791,7 @@ class InferenceWorker:
             except Exception as e:
                 job.error = e
             finally:
-                job.done.set()
+                job.done.set() # 대기 중인 submit 함수에 완료 이벤트를 전달
                 self._jobs.task_done()
 
 
@@ -887,9 +989,11 @@ def save():
     messages = []
     main_status = "실패"
 
+    # [핵심 코드: 데이터 저장 안전성 확보 파이프라인]
+    # 동시 요청 시 파일 락 획득 -> 기존 데이터 파일 읽기 -> 결합 데이터 로컬 백업 파일에 선저장(안전성) -> 메인 엑셀 덮어쓰기 -> SQLite DB 최종 연동
     with excel_lock:
         try:
-            # 1. 메인 엑셀 파일 로드 (없으면 생성)
+            # [단계 1] 메인 엑셀 파일 로드 (파일이 없거나 손상되었을 경우 예외 복구 분기)
             if os.path.exists(root_path):
                 try:
                     df = pd.read_excel(root_path)
@@ -901,16 +1005,17 @@ def save():
             new_df = pd.DataFrame(entries)
             final_df = pd.concat([df, new_df], ignore_index=True)
 
-            # 2. [중요] 백업 파일 우선 저장
+            # [단계 2: 중요] 무조건 유니크한 백업 경로에 먼저 시트 데이터를 안전 저장
             final_df.to_excel(backup_path, index=False)
             messages.append(f"<b>데이터 안전 저장됨 (Backup):</b> {today_str}/{backup_filename}")
 
-            # 3. 메인 파일 덮어쓰기 시도
+            # [단계 3] 메인 공유 파일 덮어쓰기 (사용자나 타 부서에서 엑셀 파일을 읽기 모드로 잠근 경우에 대비)
             try:
                 shutil.copy2(backup_path, root_path)
                 messages.append(f"<b>메인 파일 업데이트됨:</b> {root_filename}")
                 main_status = "성공"
             except PermissionError:
+                # [PermissionError 분기] 메인 엑셀이 열려 있어도 안전 폴더에 백업했으므로 데이터를 잃지 않고 실패 알림을 표시
                 messages.append(
                     f"<br><b>[주의] 메인 엑셀 파일이 열려있어 업데이트하지 못했습니다.</b><br>"
                     f"하지만 데이터는 <b>backup 폴더</b>에 안전하게 저장되었습니다.<br>"
@@ -921,14 +1026,17 @@ def save():
         except Exception as e:
             return f"<h3>치명적 저장 오류</h3><p>{str(e)}</p>", 500
 
+        # 메인 파일 덮어쓰기 성공/실패 여부에 따라 SQLite에 기록할 참조 링크 파일명을 분기 결정
         excel_reference = root_filename if main_status == "성공" else backup_relative_path
         for record in db_records:
             record["excel_file"] = excel_reference
 
+        # [단계 4] SQLite 이력 데이터베이스 연동
         try:
             saved_count = add_records(DB_PATH, db_records)
             messages.append(f"<b>SQLite history updated:</b> {saved_count} records")
         except Exception as e:
+            # [DB 저장 예외 분기] 엑셀은 저장 완료되었으나 DB 장애 시 경고 처리로 우회
             messages.append(
                 f"<br><b>[Warning] SQLite history update failed.</b><br>"
                 f"Excel files were saved, but the local history database was not updated.<br>"
