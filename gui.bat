@@ -1,14 +1,20 @@
 @echo off
 chcp 65001 > nul
 setlocal EnableExtensions
-TITLE Parking Enforcement OCR Server
+TITLE Parking Enforcement OCR GUI
 
 cd /d "%~dp0"
 
 echo ============================================
-echo   Parking Enforcement OCR Server
+echo   Parking Enforcement OCR GUI
 echo ============================================
 echo.
+
+if not exist "gui.py" (
+    echo ERROR: gui.py was not found.
+    pause
+    exit /b 1
+)
 
 set "VENV_PY=.venv\Scripts\python.exe"
 if exist "%VENV_PY%" (
@@ -18,27 +24,17 @@ if exist "%VENV_PY%" (
     set "PYTHON_EXE=python"
 )
 
-echo [1/3] Stopping previous processes...
-taskkill /f /im cloudflared.exe >nul 2>&1
-echo Done.
+echo Starting desktop GUI...
 echo.
-
-echo [2/3] Starting server...
-echo.
-"%PYTHON_EXE%" ocr.py --server
+"%PYTHON_EXE%" gui.py
 set "EXIT_CODE=%ERRORLEVEL%"
 
 echo.
-echo [3/3] Cleaning up...
-taskkill /f /im cloudflared.exe >nul 2>&1
-echo.
-echo ============================================
 if not "%EXIT_CODE%"=="0" (
-    echo   Server exited with code %EXIT_CODE%.
+    echo ERROR: GUI exited with code %EXIT_CODE%.
 ) else (
-    echo   Server stopped.
+    echo GUI closed.
 )
-echo ============================================
 echo.
 pause
 exit /b %EXIT_CODE%
