@@ -32,6 +32,7 @@ class SettingsManager:
         "yolo_model_path": "",  # 빈 문자열이면 best.pt -> YOLO26 기본 모델 순서로 사용
         
         # 마지막 선택 값 (UI 상태 유지)
+        "ui_language": "ko",
         "last_location": "",
         "last_reason": "",
         "last_ampm": "",
