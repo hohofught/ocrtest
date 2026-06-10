@@ -465,21 +465,6 @@ def login_required(f):
 def add_padding(img, pad_size=20, color=(255, 255, 255)):
     return cv2.copyMakeBorder(img, pad_size, pad_size, pad_size, pad_size, cv2.BORDER_CONSTANT, value=color)
 
-
-def notify_windows_completion(title, message):
-    if sys.platform != 'win32':
-        return
-
-    try:
-        ctypes.windll.user32.MessageBoxW(
-            None,
-            message,
-            title,
-            0x00000040 | 0x00001000 | 0x00040000,
-        )
-    except Exception as e:
-        print(f"[Windows 알림] 전송 실패: {e}")
-
 def apply_clahe(gray_img):
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     return clahe.apply(gray_img)
@@ -752,19 +737,11 @@ def background_processing(task_id, file_paths, location, reason, ampm):
         )
         tasks[task_id]['status'] = 'done'
         print(f"[Task {task_id}] 작업 완료.\n")
-        notify_windows_completion(
-            "OCR 인식 완료",
-            f"인식 작업이 끝났습니다.\n성공 {success_count}건 / 실패 {failure_count}건",
-        )
 
     except Exception as e:
         print(f"[Task {task_id}] 오류: {e}")
         tasks[task_id]['status'] = 'error'
         tasks[task_id]['report_text'] = f"{location} {reason} ({ampm}) - 오류 발생"
-        notify_windows_completion(
-            "OCR 인식 오류",
-            f"인식 작업 중 오류가 발생했습니다.\n{e}",
-        )
 
 # ==========================================
 # 5. Flask 라우트 정의

@@ -20,6 +20,9 @@ class SettingsManager:
         # Discord 웹훅 설정
         "discord_webhook_url": "",
 
+        # Windows 완료 알림 설정
+        "windows_notifications_enabled": True,
+
         # 서버 설정
         "server_port": "5000",
         
@@ -162,6 +165,14 @@ class SettingsManager:
     @discord_webhook_url.setter
     def discord_webhook_url(self, value: str):
         self.set("discord_webhook_url", value)
+
+    @property
+    def windows_notifications_enabled(self) -> bool:
+        return bool(self.get("windows_notifications_enabled", True))
+
+    @windows_notifications_enabled.setter
+    def windows_notifications_enabled(self, value: bool):
+        self.set("windows_notifications_enabled", bool(value))
 
     @property
     def server_port(self) -> str:

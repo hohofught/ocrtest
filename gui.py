@@ -64,6 +64,7 @@ class ParkingEnforcementGUI:
         
         # 설정 관리자 초기화 및 로드
         self.settings = get_settings()
+        self.windows_notifications_enabled = bool(self.settings.get("windows_notifications_enabled", True))
         
         # Tkinter 위젯은 메인 스레드에서 만들고 갱신해야 한다.
         # 다크 테마 설정
@@ -508,10 +509,11 @@ class ParkingEnforcementGUI:
         self.processing_summary = (success_count, failure_count)
         self.update_result_list()
         self.update_status(f"분석 완료! 성공 {success_count}건 / 실패 {failure_count}건")
-        notify_windows_completion(
-            "OCR 인식 완료",
-            f"인식 작업이 끝났습니다.\n성공 {success_count}건 / 실패 {failure_count}건",
-        )
+        if self.windows_notifications_enabled:
+            notify_windows_completion(
+                "OCR 인식 완료",
+                f"인식 작업이 끝났습니다.\n성공 {success_count}건 / 실패 {failure_count}건",
+            )
     
     def _process_images(self):
         """이미지 처리 (백그라운드 스레드)"""
@@ -539,6 +541,7 @@ class ParkingEnforcementGUI:
             progress = ((i + 1) / total) * 100
             # 작업 스레드에서는 root.after를 통해서만 Tkinter 위젯을 갱신한다.
             self.root.after(0, lambda p=progress, idx=i: self._update_progress(p, idx))
+        self.windows_notifications_enabled = bool(self.settings.get("windows_notifications_enabled", True))
         
         self.processing = False
         self.root.after(0, lambda s=success_count, f=failure_count: self._show_processing_complete(s, f))
@@ -798,6 +801,7 @@ class ParkingEnforcementGUI:
         
         # 설정 입력 필드들 저장
         entries = {}
+        notification_var = tk.BooleanVar(value=bool(self.settings.get("windows_notifications_enabled", True)))
         
         # === 링크 고정 설정 섹션 ===
         section1 = ttk.LabelFrame(scrollable_frame, text="링크 고정 설정 (Cloudflare Tunnel)", padding=10)
@@ -827,6 +831,22 @@ class ParkingEnforcementGUI:
         
         ttk.Label(section2, text="서버 시작 시 Discord로 알림을 보냅니다.",
                  foreground="#888888").grid(row=1, column=0, columnspan=2, sticky="w", pady=5)
+
+        # === Windows 알림 설정 ===
+        section_windows = ttk.LabelFrame(scrollable_frame, text="Windows 알림", padding=10)
+        section_windows.pack(fill=tk.X, padx=10, pady=10)
+
+        ttk.Checkbutton(
+            section_windows,
+            text="GUI 모드에서 작업 완료 알림 표시",
+            variable=notification_var,
+        ).grid(row=0, column=0, sticky="w", pady=5)
+
+        ttk.Label(
+            section_windows,
+            text="웹 모드에서는 알림이 표시되지 않습니다.",
+            foreground="#888888",
+        ).grid(row=1, column=0, sticky="w", pady=5)
 
         # === 서버 설정 ===
         section_server = ttk.LabelFrame(scrollable_frame, text="서버 설정", padding=10)
@@ -921,6 +941,9 @@ class ParkingEnforcementGUI:
             for key, entry in entries.items():
                 # 설정 폼의 모든 값은 문자열로 저장한다.
                 self.settings.set(key, entry.get().strip())
+
+            self.settings.set("windows_notifications_enabled", bool(notification_var.get()))
+            self.windows_notifications_enabled = bool(notification_var.get())
             
             if self.settings.save():
                 messagebox.showinfo("저장 완료", "설정이 저장되었습니다.\n일부 설정은 서버 재시작 후 적용됩니다.")
