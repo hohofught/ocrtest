@@ -11,6 +11,7 @@ Tkinter 기반 데스크톱 애플리케이션
 
 import os
 import sys
+import ctypes
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -36,6 +37,21 @@ except ImportError as e:
     OCR_AVAILABLE = False
 
 
+def notify_windows_completion(title, message):
+    if sys.platform != "win32":
+        return
+
+    try:
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            message,
+            title,
+            0x00000040 | 0x00001000 | 0x00040000,
+        )
+    except Exception as e:
+        print(f"[Windows 알림] 전송 실패: {e}")
+
+
 class ParkingEnforcementGUI:
     """주차 단속 GUI 애플리케이션"""
     
@@ -59,6 +75,7 @@ class ParkingEnforcementGUI:
         self.results = []
         self.current_index = 0
         self.processing = False
+        self.processing_summary = None
         
         # 서버 관련
         # waitress 서버 객체가 UI 스레드와 서버 스레드 사이를 오갈 때는
@@ -355,16 +372,16 @@ class ParkingEnforcementGUI:
         folder = filedialog.askdirectory(title="이미지 폴더 선택")
         if folder:
             # 새 폴더 기준으로 상태를 다시 만들어 이전 결과가 남지 않게 한다.
-            self.image_files = []
+            loaded_files = []
             for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp']:
                 import glob
-                # Windows에서는 대소문자 확장자가 섞일 수 있어 둘 다 포함한다.
-                self.image_files.extend(glob.glob(os.path.join(folder, ext)))
-                self.image_files.extend(glob.glob(os.path.join(folder, ext.upper())))
-            
-            self.image_files.sort()
+                # Windows glob은 대소문자를 구분하지 않으므로 한 번만 수집해도 된다.
+                loaded_files.extend(glob.glob(os.path.join(folder, ext)))
+
+            self.image_files = sorted(set(loaded_files))
             self.results = [{"filename": os.path.basename(f), "path": f, "plate": ""} 
                            for f in self.image_files]
+            self.processing_summary = None
             self.current_index = 0
             self.update_result_list()
             self.show_current_image()
@@ -381,6 +398,7 @@ class ParkingEnforcementGUI:
             self.image_files = list(files)
             self.results = [{"filename": os.path.basename(f), "path": f, "plate": ""} 
                            for f in self.image_files]
+            self.processing_summary = None
             self.current_index = 0
             self.update_result_list()
             self.show_current_image()
@@ -440,11 +458,20 @@ class ParkingEnforcementGUI:
             plate = result.get("plate", "")
             status = "완료" if plate else "대기"
             self.result_listbox.insert(tk.END, f"{status} {result['filename']}: {plate}")
+
+        if self.processing_summary:
+            success_count, failure_count = self.processing_summary
+            self.result_listbox.insert(
+                tk.END,
+                f"요약 성공 {success_count}건 / 실패 {failure_count}건",
+            )
     
     def on_result_select(self, event):
         """결과 항목 선택"""
         selection = self.result_listbox.curselection()
         if selection:
+            if selection[0] >= len(self.results):
+                return
             self.current_index = selection[0]
             self.show_current_image()
     
@@ -472,12 +499,25 @@ class ParkingEnforcementGUI:
             return
         
         self.processing = True
+        self.processing_summary = None
         # OCR은 몇 초 동안 막힐 수 있으므로 Tkinter 이벤트 루프 밖에서 실행한다.
         threading.Thread(target=self._process_images, daemon=True).start()
+
+    def _show_processing_complete(self, success_count, failure_count):
+        """완료 요약과 Windows 알림을 표시"""
+        self.processing_summary = (success_count, failure_count)
+        self.update_result_list()
+        self.update_status(f"분석 완료! 성공 {success_count}건 / 실패 {failure_count}건")
+        notify_windows_completion(
+            "OCR 인식 완료",
+            f"인식 작업이 끝났습니다.\n성공 {success_count}건 / 실패 {failure_count}건",
+        )
     
     def _process_images(self):
         """이미지 처리 (백그라운드 스레드)"""
         total = len(self.image_files)
+        success_count = 0
+        failure_count = 0
         
         for i, img_path in enumerate(self.image_files):
             if not self.processing:
@@ -487,8 +527,13 @@ class ParkingEnforcementGUI:
                 # detect_best_plate는 ocr.py의 추론 워커 안에서 순차 실행된다.
                 plate, _ = detect_best_plate(img_path)
                 self.results[i]["plate"] = plate if plate else ""
+                if plate:
+                    success_count += 1
+                else:
+                    failure_count += 1
             except Exception as e:
                 self.results[i]["plate"] = ""
+                failure_count += 1
             
             # UI 업데이트 (메인 스레드에서)
             progress = ((i + 1) / total) * 100
@@ -496,7 +541,7 @@ class ParkingEnforcementGUI:
             self.root.after(0, lambda p=progress, idx=i: self._update_progress(p, idx))
         
         self.processing = False
-        self.root.after(0, lambda: self.update_status("분석 완료!"))
+        self.root.after(0, lambda s=success_count, f=failure_count: self._show_processing_complete(s, f))
     
     def _update_progress(self, progress, index):
         """진행률 업데이트"""
@@ -583,6 +628,7 @@ class ParkingEnforcementGUI:
         self.image_files = []
         self.results = []
         self.current_index = 0
+        self.processing_summary = None
         self.progress_var.set(0)
         self.result_listbox.delete(0, tk.END)
         self.plate_entry.delete(0, tk.END)
@@ -629,6 +675,8 @@ class ParkingEnforcementGUI:
 
     def open_history_window(self):
         """서버 없이 SQLite 기록을 직접 표시"""
+        import webbrowser
+
         dialog = tk.Toplevel(self.root)
         dialog.title("과거 기록")
         dialog.geometry("900x560")
