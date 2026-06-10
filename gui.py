@@ -95,20 +95,46 @@ class ParkingEnforcementGUI:
         last_reason = self.settings.get("last_reason", "")
         last_ampm = self.settings.get("last_ampm", "")
         
-        if last_location and OCR_AVAILABLE:
-            if last_location in LOCATIONS:
-                self.location_var.set(last_location)
+        if last_location:
+            self.location_var.set(last_location)
         
-        if last_reason and OCR_AVAILABLE:
-            if last_reason in REASONS:
-                self.reason_var.set(last_reason)
+        if last_reason:
+            self.reason_var.set(last_reason)
         
         if last_ampm:
             self.ampm_var.set(last_ampm)
+
+    def get_combobox_values(self, default_values, extra_value=""):
+        """Return default values plus a custom value when needed."""
+        values = list(default_values)
+        extra_value = extra_value.strip() if isinstance(extra_value, str) else ""
+        if extra_value and extra_value not in values:
+            values.insert(0, extra_value)
+        return values
+
+    def remember_combobox_input(self, combo, variable):
+        """Keep a typed combobox value available in the dropdown."""
+        value = variable.get().strip()
+        if variable.get() != value:
+            variable.set(value)
+        if not value:
+            return
+
+        values = list(combo.cget("values"))
+        if value not in values:
+            values.insert(0, value)
+            combo.configure(values=values)
+
+    def remember_custom_inputs(self):
+        if hasattr(self, "location_combo"):
+            self.remember_combobox_input(self.location_combo, self.location_var)
+        if hasattr(self, "reason_combo"):
+            self.remember_combobox_input(self.reason_combo, self.reason_var)
     
     def save_current_settings(self):
         """현재 UI 상태를 설정에 저장"""
         # 반복 사용 시 마지막 위치/사유/시간대에서 시작하도록 작은 UI 상태를 저장한다.
+        self.remember_custom_inputs()
         self.settings.set("last_location", self.location_var.get())
         self.settings.set("last_reason", self.reason_var.get())
         self.settings.set("last_ampm", self.ampm_var.get())
@@ -230,16 +256,22 @@ class ParkingEnforcementGUI:
         settings_frame.pack(fill=tk.X, pady=(0, 14))
         
         ttk.Label(settings_frame, text="위치", style="Panel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
-        self.location_var = tk.StringVar(value=LOCATIONS[0] if OCR_AVAILABLE else "")
-        location_combo = ttk.Combobox(settings_frame, textvariable=self.location_var, 
-                                       values=LOCATIONS if OCR_AVAILABLE else [], width=18)
-        location_combo.grid(row=0, column=1, sticky="ew", padx=(0, 18), pady=4)
+        location_values = self.get_combobox_values(LOCATIONS if OCR_AVAILABLE else [], self.settings.get("last_location", ""))
+        self.location_var = tk.StringVar(value=location_values[0] if location_values else "")
+        self.location_combo = ttk.Combobox(settings_frame, textvariable=self.location_var,
+                                           values=location_values, width=18, state="normal")
+        self.location_combo.grid(row=0, column=1, sticky="ew", padx=(0, 18), pady=4)
+        self.location_combo.bind("<FocusOut>", lambda event: self.remember_combobox_input(self.location_combo, self.location_var))
+        self.location_combo.bind("<Return>", lambda event: self.remember_combobox_input(self.location_combo, self.location_var))
         
         ttk.Label(settings_frame, text="사유", style="Panel.TLabel").grid(row=0, column=2, sticky="w", padx=(0, 8), pady=4)
-        self.reason_var = tk.StringVar(value=REASONS[0] if OCR_AVAILABLE else "")
-        reason_combo = ttk.Combobox(settings_frame, textvariable=self.reason_var,
-                                     values=REASONS if OCR_AVAILABLE else [], width=30)
-        reason_combo.grid(row=0, column=3, sticky="ew", padx=(0, 18), pady=4)
+        reason_values = self.get_combobox_values(REASONS if OCR_AVAILABLE else [], self.settings.get("last_reason", ""))
+        self.reason_var = tk.StringVar(value=reason_values[0] if reason_values else "")
+        self.reason_combo = ttk.Combobox(settings_frame, textvariable=self.reason_var,
+                                         values=reason_values, width=30, state="normal")
+        self.reason_combo.grid(row=0, column=3, sticky="ew", padx=(0, 18), pady=4)
+        self.reason_combo.bind("<FocusOut>", lambda event: self.remember_combobox_input(self.reason_combo, self.reason_var))
+        self.reason_combo.bind("<Return>", lambda event: self.remember_combobox_input(self.reason_combo, self.reason_var))
         
         ttk.Label(settings_frame, text="시간대", style="Panel.TLabel").grid(row=0, column=4, sticky="w", padx=(0, 8), pady=4)
         self.ampm_var = tk.StringVar(value="오전" if datetime.now().hour < 12 else "오후")
@@ -483,6 +515,7 @@ class ParkingEnforcementGUI:
         if not self.results:
             messagebox.showwarning("경고", "저장할 데이터가 없습니다.")
             return
+        self.remember_custom_inputs()
         
         # 유효한 번호판만 필터링
         # 빈 OCR 결과는 저장하지 않는다. 포함해야 하는 값은 사용자가 저장 전에 수정할 수 있다.

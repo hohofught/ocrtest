@@ -1,24 +1,24 @@
-# 주차 단속 시스템 - DLL OCR 버전 (2.0V)
-# Python 의존성 패키지
+# Parking Enforcement OCR System - DLL OCR version 2.0
+# Python dependencies
 
-# 웹 프레임워크
+# Web framework
 flask>=2.0.0
 waitress>=2.0.0
 
-# 이미지 처리
+# Image processing
 opencv-python>=4.5.0
 numpy>=1.20.0
 Pillow>=9.0.0
 
-# 데이터 처리
+# Data processing
 pandas>=1.3.0
 openpyxl>=3.0.0
 
-# 객체 탐지 (YOLO, YOLO26 지원)
+# Object detection
 ultralytics>=8.4.0
 
-# HTTP 요청
+# HTTP requests
 requests>=2.25.0
 
-# 빌드 도구 (개발용)
+# Build tools
 pyinstaller>=5.0.0
